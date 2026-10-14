@@ -142,27 +142,26 @@ class AppTest {
     @Test
     fun nightScreenDimsAndWakesOnTouch() {
         SettingsRepo.update { it.copy(screenOnSeconds = 10, nightBrightnessPercent = 40) }
-        // Changing the window attributes leaves Robolectric's window "not shown", so the night
-        // checks use assertExists; the brightness values and the screenshot cover what is seen.
+        // The whole night screen is one tap target, so its content lives in the unmerged tree.
         // Drive the clock by hand, so the 10 s timer only passes when the test says so.
         compose.mainClock.autoAdvance = false
         Live.update {
             LiveState(running = true, phase = NightEngine.Phase.LISTENING, startMs = START, endAtMs = START + 8 * HOUR, events = 3)
         }
         frame(200)
-        compose.onNodeWithTag("night-awake").assertExists()
+        compose.onNodeWithTag("night-awake", useUnmergedTree = true).assertIsDisplayed()
         assertEquals(0.4f, brightness(), 0.001f)
         assertEquals(true, keepsScreenOn())
         shot("05-noche-legible")
 
         frame(11_000)
-        compose.onNodeWithTag("night-awake").assertDoesNotExist()
+        compose.onNodeWithTag("night-awake", useUnmergedTree = true).assertDoesNotExist()
         assertEquals(0.01f, brightness(), 0.001f)
         assertEquals(false, keepsScreenOn())
 
         compose.onNodeWithTag("night-screen").performClick()
         frame(200)
-        compose.onNodeWithTag("night-awake").assertExists()
+        compose.onNodeWithTag("night-awake", useUnmergedTree = true).assertIsDisplayed()
         assertEquals(0.4f, brightness(), 0.001f)
 
         // Night over: normal brightness again.
