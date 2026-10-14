@@ -2,6 +2,7 @@ package ruido.app
 
 import android.view.WindowManager
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertTextEquals
