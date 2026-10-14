@@ -1,6 +1,6 @@
 package ruido.app
 
-import android.annotation.SuppressLint
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,38 +8,49 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
-import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import ruido.core.Levels
 import ruido.core.NightEngine
 import ruido.core.NightRecord
-import ruido.core.NoiseGenerator
-import kotlin.math.roundToInt
 
 /**
- * Runs the whole night: listens to the microphone, asks [NightEngine] what to do every
- * 100 ms and plays the masking noise. A foreground service, so Android keeps it alive.
- * It has to be started while the app is on screen (Android does not allow starting the
- * microphone from the background).
+ * Listens to the microphone, asks [NightEngine] what to do every 100 ms and plays the
+ * masking noise. Runs as a foreground service so Android keeps it alive all night. It
+ * must be started while the app is on screen: Android does not let a background app
+ * start using the microphone.
+ *
+ * Two modes: a real night (saved, ends at the wake-up time) and the test mode in
+ * settings (nothing saved, no end, follows setting changes live).
  */
 class NightService : Service() {
 
     @Volatile private var running = false
-    @Volatile private var gain = 0.0
+    @Volatile private var pendingSettings: AppSettings? = null
+    @Volatile private var pendingRecalibrate = false
 
+    private var test = false
     private var captureThread: Thread? = null
-    private var playbackThread: Thread? = null
+    private var player: NoisePlayer? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var savedMediaVolume: Int? = null
+    private var mediaVolume: MediaVolume? = null
+    private var scope: CoroutineScope? = null
+    private val main = Handler(Looper.getMainLooper())
 
     private lateinit var storage: NightStorage
     private var engine: NightEngine? = null
@@ -48,58 +59,74 @@ class NightService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopNight()
-            return START_NOT_STICKY
+        when {
+            intent?.action == ACTION_STOP -> stopListening()
+            !running -> startListening(test = intent?.action == ACTION_TEST)
         }
-        if (!running) startNight()
         return START_NOT_STICKY
     }
 
-    private fun startNight() {
+    private fun startListening(test: Boolean) {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Live.update { it.copy(error = "Falta el permiso del micrófono") }
+            stopSelf()
+            return
+        }
+        SettingsRepo.init(this)
+        SoundPreview.stop()
+        this.test = test
         storage = NightStorage(this)
-        val settings = runBlocking { SettingsStore(this@NightService).current() }
+        val settings = SettingsRepo.current
         startMs = System.currentTimeMillis()
-        val config = settings.toNightConfig(startMs)
+        val endAt = if (test) null else settings.wakeAtMs(startMs)
 
-        startForeground(
-            NOTIFICATION_ID,
-            notification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-        )
+        startForeground(NOTIFICATION_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
 
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+        wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ruido:night")
             .apply { acquire(16 * 60 * 60 * 1000L) }
 
-        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
-        savedMediaVolume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        audio.setStreamVolume(AudioManager.STREAM_MUSIC, (max * settings.mediaVolumePercent / 100.0).roundToInt(), 0)
+        mediaVolume = MediaVolume(this).apply { set(settings.mediaVolumePercent) }
 
-        val engine = NightEngine(config, startMs).also { engine = it }
-        storage.save(NightRecord(startMs, null, emptyList(), emptyList()))
+        val engine = NightEngine(settings.toNightConfig(endAt), startMs).also { engine = it }
+        if (!test) storage.save(NightRecord(startMs, null, emptyList(), emptyList()))
         running = true
-        gain = 0.0
-        Live.update { LiveState(running = true, startMs = startMs, endAtMs = config.endAtMs) }
-
-        playbackThread = Thread({ playbackLoop(settings) }, "ruido-playback").apply {
-            priority = Thread.MAX_PRIORITY
-            start()
+        Live.update {
+            LiveState(running = true, test = test, startMs = startMs, endAtMs = endAt, thresholdDb = settings.thresholdDb.toDouble())
         }
-        captureThread = Thread({ captureLoop(engine, config.windowMs) }, "ruido-capture").apply { start() }
+
+        player = NoisePlayer(settings.color, ::fail).apply { start() }
+        captureThread = Thread({ captureLoop(engine) }, "ruido-capture").apply { start() }
+
+        // Setting changes apply right away (mainly for the test mode).
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main).apply {
+            launch {
+                var last = settings
+                SettingsRepo.state.drop(1).collect { s ->
+                    player?.color = s.color
+                    if (s.mediaVolumePercent != last.mediaVolumePercent) {
+                        mediaVolume?.set(s.mediaVolumePercent)
+                        // The microphone now hears the app's noise at another level.
+                        pendingRecalibrate = true
+                    }
+                    pendingSettings = s
+                    last = s
+                }
+            }
+        }
     }
 
-    @SuppressLint("MissingPermission") // Checked by the screen before starting the night.
-    private fun captureLoop(engine: NightEngine, windowMs: Long) {
-        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+    private fun captureLoop(engine: NightEngine) {
+        val audio = getSystemService(AudioManager::class.java)
         // UNPROCESSED skips automatic gain control, which would flatten the very peaks we detect.
         val unprocessed = audio.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
         val source = if (unprocessed) MediaRecorder.AudioSource.UNPROCESSED else MediaRecorder.AudioSource.VOICE_RECOGNITION
-        val samplesPerWindow = (SAMPLE_RATE_IN * windowMs / 1000).toInt()
-        val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val windowMs = engine.config.windowMs
+        val samplesPerWindow = (SAMPLE_RATE * windowMs / 1000).toInt()
+        val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val record = try {
-            AudioRecord(source, SAMPLE_RATE_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, samplesPerWindow * 2 * 4))
+            @Suppress("MissingPermission") // Checked in startListening.
+            AudioRecord(source, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, samplesPerWindow * 2 * 4))
         } catch (e: Exception) {
             fail("No se pudo abrir el micrófono: ${e.message}")
             return
@@ -113,33 +140,47 @@ class NightService : Service() {
 
         val buffer = ShortArray(samplesPerWindow)
         var lastSave = System.currentTimeMillis()
-        record.startRecording()
+        var lastSpans = 0
         try {
+            record.startRecording()
             while (running) {
                 var filled = 0
                 while (filled < samplesPerWindow && running) {
                     val n = record.read(buffer, filled, samplesPerWindow - filled)
-                    if (n < 0) throw IllegalStateException("Error del micrófono $n")
+                    if (n < 0) throw IllegalStateException("código $n")
                     filled += n
                 }
                 if (!running) break
                 val now = System.currentTimeMillis()
+
+                pendingSettings?.let { s ->
+                    pendingSettings = null
+                    engine.updateConfig(s.toNightConfig(engine.config.endAtMs))
+                }
+                if (pendingRecalibrate) {
+                    pendingRecalibrate = false
+                    engine.recalibrate(now)
+                }
+
                 val tick = engine.tick(now, Levels.rmsDbfs(buffer, filled))
-                gain = tick.gain
+                player?.gain = tick.gain
+                val playing = tick.phase == NightEngine.Phase.PLAYING
                 Live.update {
                     it.copy(
                         phase = tick.phase, levelDb = tick.levelDb, baselineDb = tick.baselineDb,
-                        expectedDb = tick.expectedDb, leakDb = engine.leakDb, gain = tick.gain,
-                        noisy = tick.noisy, events = engine.events.size, playbackStarts = engine.spans.size +
-                            if (tick.phase == NightEngine.Phase.PLAYING) 1 else 0,
+                        expectedDb = tick.expectedDb, thresholdDb = engine.config.thresholdDb,
+                        leakDb = engine.leakDb, gain = tick.gain, noisy = tick.noisy,
+                        events = engine.events.size,
+                        playbackStarts = engine.spans.size + if (playing) 1 else 0,
                     )
                 }
-                if (tick.finishedEvent != null || tick.finishedSpan != null || now - lastSave > SAVE_EVERY_MS) {
+                if (!test && (engine.spans.size != lastSpans || tick.finishedEvent != null || now - lastSave > SAVE_EVERY_MS)) {
                     save(engine, null)
                     lastSave = now
+                    lastSpans = engine.spans.size
                 }
                 if (tick.phase == NightEngine.Phase.ENDED && tick.gain == 0.0) {
-                    android.os.Handler(mainLooper).post { stopNight() }
+                    main.post { stopListening() }
                     break
                 }
             }
@@ -147,59 +188,8 @@ class NightService : Service() {
             Log.e(TAG, "capture", e)
             fail("El micrófono se detuvo: ${e.message}")
         } finally {
-            record.stop()
+            runCatching { record.stop() }
             record.release()
-        }
-    }
-
-    private fun playbackLoop(settings: AppSettings) {
-        val generator = NoiseGenerator(settings.color, seed = System.nanoTime())
-        val minBuffer = AudioTrack.getMinBufferSize(SAMPLE_RATE_OUT, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build(),
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(SAMPLE_RATE_OUT)
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build(),
-            )
-            .setBufferSizeInBytes(maxOf(minBuffer, CHUNK * 4 * 4))
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-        val chunk = FloatArray(CHUNK)
-        var current = 0.0
-        var playing = false
-        try {
-            while (running) {
-                val next = gain
-                if (next == 0.0 && current == 0.0) {
-                    // Nothing to play: pause the track so the speaker is idle, and wait.
-                    if (playing) {
-                        track.pause(); track.flush(); playing = false
-                    }
-                    Thread.sleep(50)
-                    continue
-                }
-                if (!playing) {
-                    track.play(); playing = true
-                }
-                generator.fill(chunk, current, next)
-                current = next
-                track.write(chunk, 0, chunk.size, AudioTrack.WRITE_BLOCKING)
-            }
-        } catch (_: InterruptedException) {
-        } catch (e: Exception) {
-            Log.e(TAG, "playback", e)
-            fail("El reproductor se detuvo: ${e.message}")
-        } finally {
-            runCatching { track.stop() }
-            track.release()
         }
     }
 
@@ -211,39 +201,38 @@ class NightService : Service() {
 
     private fun fail(message: String) {
         Live.update { it.copy(error = message) }
-        android.os.Handler(mainLooper).post { stopNight() }
+        main.post { stopListening() }
     }
 
-    private fun stopNight() {
+    private fun stopListening() {
         if (running) {
             running = false
+            scope?.cancel()
             captureThread?.join(2000)
-            playbackThread?.interrupt()
-            playbackThread?.join(2000)
+            player?.stop()
             val now = System.currentTimeMillis()
             engine?.let {
                 it.finish(now)
-                save(it, now)
+                if (!test) save(it, now)
             }
-            savedMediaVolume?.let {
-                (getSystemService(AUDIO_SERVICE) as AudioManager).setStreamVolume(AudioManager.STREAM_MUSIC, it, 0)
-            }
+            mediaVolume?.restore()
             wakeLock?.takeIf { it.isHeld }?.release()
         }
-        Live.update { it.copy(running = false, gain = 0.0) }
+        Live.update { it.copy(running = false, gain = 0.0, noisy = false) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
-        if (running) stopNight()
+        if (running) stopListening()
         super.onDestroy()
     }
 
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Noche en curso", NotificationManager.IMPORTANCE_MIN).apply {
+            NotificationChannel(CHANNEL, "Noche en curso", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Aviso fijo mientras la app escucha. No suena ni vibra."
                 setSound(null, null)
                 enableVibration(false)
                 enableLights(false)
@@ -251,18 +240,21 @@ class NightService : Service() {
             },
         )
         val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+            this, 0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE,
         )
         val stop = PendingIntent.getService(
             this, 1, Intent(this, NightService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
         )
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Escuchando la noche")
+            .setContentTitle(if (test) "Probando la detección" else "Escuchando la noche")
             .setContentIntent(open)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
-            .addAction(Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Terminar noche", stop).build())
+            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+            .addAction(Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Terminar", stop).build())
             .build()
     }
 
@@ -271,14 +263,17 @@ class NightService : Service() {
         private const val CHANNEL = "night"
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "ruido.STOP"
-        private const val SAMPLE_RATE_IN = 16_000
-        private const val SAMPLE_RATE_OUT = 48_000
-        /** 20 ms of output per write. */
-        private const val CHUNK = 960
-        private const val SAVE_EVERY_MS = 5 * 60 * 1000L
+        private const val ACTION_TEST = "ruido.TEST"
+        private const val SAMPLE_RATE = 16_000
+        /** Saved often, so a night cut off by Android still shows when it stopped. */
+        private const val SAVE_EVERY_MS = 60 * 1000L
 
-        fun start(context: Context) {
+        fun startNight(context: Context) {
             context.startForegroundService(Intent(context, NightService::class.java))
+        }
+
+        fun startTest(context: Context) {
+            context.startForegroundService(Intent(context, NightService::class.java).setAction(ACTION_TEST))
         }
 
         fun stop(context: Context) {

@@ -171,4 +171,53 @@ class NightEngineTest {
         assertEquals(NightEngine.Phase.ENDED, engine.phase)
         assertNull(engine.tick(now + 100, -60.0).finishedSpan)
     }
+
+    @Test
+    fun mutedMicrophoneIsIgnored() {
+        // Another app holds the microphone for a minute: Android feeds digital silence.
+        val engine = NightEngine(config, 0)
+        val room = Room()
+        var now = 0L
+        while (now < 10 * MINUTE) {
+            val muted = now in (3 * MINUTE) until (4 * MINUTE)
+            engine.tick(now, if (muted) Levels.FLOOR_DB else room.levelAt(now, engine.gain))
+            now += 100
+        }
+        assertTrue(engine.spans.isEmpty(), "returning from silence is not a noise")
+        assertEquals(-60.0, engine.tick(now, room.levelAt(now, 0.0)).baselineDb, 0.6)
+    }
+
+    @Test
+    fun neighborNoiseDuringLeakCalibrationDoesNotInflateIt() {
+        val room = Room().apply { noise(11_500, 800, -30.0) }
+        val r = run(room, config, 30 * SECOND)
+        assertEquals(-35.0, r.engine.leakDb!!, 1.0)
+    }
+
+    @Test
+    fun lowerThresholdAppliesImmediately() {
+        val room = Room().apply { noise(3 * MINUTE, 1 * SECOND, -52.0) } // +8 dB
+        val engine = NightEngine(config, 0)
+        var now = 0L
+        while (now < 5 * MINUTE) {
+            if (now == 2 * MINUTE) engine.updateConfig(config.copy(thresholdDb = 6.0))
+            engine.tick(now, room.levelAt(now, engine.gain)); now += 100
+        }
+        assertEquals(1, engine.spans.size + if (engine.phase == NightEngine.Phase.PLAYING) 1 else 0)
+    }
+
+    @Test
+    fun recalibrateLearnsAgain() {
+        val room = Room()
+        val engine = NightEngine(config, 0)
+        var now = 0L
+        while (now < 2 * MINUTE) { engine.tick(now, room.levelAt(now, engine.gain)); now += 100 }
+        engine.recalibrate(now)
+        assertEquals(NightEngine.Phase.CALIBRATING_QUIET, engine.phase)
+        assertNull(engine.leakDb)
+        val louder = Room(backgroundDb = -50.0)
+        while (now < 3 * MINUTE) { engine.tick(now, louder.levelAt(now, engine.gain)); now += 100 }
+        assertEquals(NightEngine.Phase.LISTENING, engine.phase)
+        assertEquals(-50.0, engine.tick(now, -50.0).baselineDb, 0.6)
+    }
 }

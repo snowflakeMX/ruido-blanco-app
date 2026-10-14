@@ -11,7 +11,7 @@ import kotlin.math.min
  * engine learns at start how loud its own noise sounds to the microphone ("leak") and,
  * while playing, compares the level with background + leak instead of background alone.
  */
-class NightEngine(private val config: NightConfig, startMs: Long) {
+class NightEngine(config: NightConfig, startMs: Long) {
 
     enum class Phase { CALIBRATING_QUIET, CALIBRATING_LEAK, LISTENING, PLAYING, ENDED }
 
@@ -31,6 +31,9 @@ class NightEngine(private val config: NightConfig, startMs: Long) {
         val finishedSpan: PlaybackSpan? = null,
     )
 
+    var config = config
+        private set
+
     var phase = Phase.CALIBRATING_QUIET
         private set
     var gain = 0.0
@@ -45,8 +48,7 @@ class NightEngine(private val config: NightConfig, startMs: Long) {
     private var baselineDb = Levels.FLOOR_DB
     private var leakPowerAtUnitGain = 0.0
     private var leakCalibrated = false
-    private var leakSum = 0.0
-    private var leakCount = 0
+    private val leakSamples = ArrayList<Double>()
 
     private val recentPower = DoubleArray(max(1, config.smoothingWindows))
     private var recentCount = 0
@@ -71,14 +73,17 @@ class NightEngine(private val config: NightConfig, startMs: Long) {
         val expectedDb = Levels.powerToDb(Levels.dbToPower(baselineDb) + leakPowerAtUnitGain * gain * gain)
         val detecting = phase == Phase.LISTENING || phase == Phase.PLAYING
         val excess = smoothedDb - expectedDb
-        val noisy = detecting && recentCount >= recentPower.size && excess >= config.thresholdDb
+        // Android feeds pure digital silence while another app (a call, the assistant) holds the
+        // microphone. Those windows say nothing about the room: don't learn from them.
+        val muted = levelDb <= Levels.FLOOR_DB + 0.5
+        val noisy = detecting && !muted && recentCount >= recentPower.size && excess >= config.thresholdDb
 
         var finishedEvent: NoiseEvent? = null
         var finishedSpan: PlaybackSpan? = null
 
         when (phase) {
             Phase.CALIBRATING_QUIET -> {
-                baseline.add(levelDb)
+                if (!muted) baseline.add(levelDb)
                 if (nowMs - phaseStartMs >= config.calibrateQuietMs) {
                     baselineDb = baseline.percentile(config.baselinePercentile) ?: Levels.FLOOR_DB
                     if (config.calibrateLeakMs > 0 && !leakCalibrated && config.volume > 0) {
@@ -92,10 +97,11 @@ class NightEngine(private val config: NightConfig, startMs: Long) {
 
             Phase.CALIBRATING_LEAK -> {
                 if (target > 0 && gain >= target) {
-                    leakSum += Levels.dbToPower(levelDb)
-                    leakCount++
-                    if (leakCount * config.windowMs >= config.calibrateLeakMs) {
-                        val leakPower = leakSum / leakCount - Levels.dbToPower(baselineDb)
+                    if (!muted) leakSamples += levelDb
+                    if ((nowMs - phaseStartMs) >= config.calibrateLeakMs + 1_000) {
+                        // Median, so a neighbor's noise during these seconds doesn't inflate it.
+                        val median = leakSamples.sorted().getOrNull(leakSamples.size / 2) ?: baselineDb
+                        val leakPower = Levels.dbToPower(median) - Levels.dbToPower(baselineDb)
                         leakPowerAtUnitGain = max(0.0, leakPower) / (gain * gain)
                         leakCalibrated = true
                         target = 0.0
@@ -106,9 +112,9 @@ class NightEngine(private val config: NightConfig, startMs: Long) {
             }
 
             Phase.LISTENING, Phase.PLAYING -> {
-                finishedEvent = trackEvent(nowMs, levelDb, excess, noisy)
+                if (!muted) finishedEvent = trackEvent(nowMs, levelDb, excess, noisy)
                 finishedSpan = updatePlayback(nowMs)
-                if (phase == Phase.LISTENING && gain == 0.0 && !noisy && eventStartMs == null) {
+                if (phase == Phase.LISTENING && gain == 0.0 && !noisy && !muted && eventStartMs == null) {
                     baseline.add(levelDb)
                     baselineDb = baseline.percentile(config.baselinePercentile) ?: baselineDb
                 }
@@ -127,6 +133,38 @@ class NightEngine(private val config: NightConfig, startMs: Long) {
         closeSpan(nowMs)
         phase = Phase.ENDED
         target = 0.0
+    }
+
+    /**
+     * Applies new settings mid-night (used by the test mode in settings). The end time,
+     * window and averaging lengths keep their original values.
+     */
+    fun updateConfig(newConfig: NightConfig) {
+        config = newConfig.copy(
+            endAtMs = config.endAtMs,
+            windowMs = config.windowMs,
+            smoothingWindows = config.smoothingWindows,
+            baselineWindowMs = config.baselineWindowMs,
+        )
+        if (phase == Phase.PLAYING && !forcedStop && target > 0) target = config.volume
+    }
+
+    /**
+     * Forgets the background and the app's own noise and measures both again, for example
+     * after the phone's media volume changed.
+     */
+    fun recalibrate(nowMs: Long) {
+        closeEvent(nowMs)
+        closeSpan(nowMs)
+        baseline.clear()
+        baselineDb = Levels.FLOOR_DB
+        leakCalibrated = false
+        leakPowerAtUnitGain = 0.0
+        leakSamples.clear()
+        forcedStop = false
+        target = 0.0
+        gain = 0.0
+        enter(Phase.CALIBRATING_QUIET, nowMs)
     }
 
     /** How loud the app's own noise sounds to the microphone at the configured volume, or null if unknown. */

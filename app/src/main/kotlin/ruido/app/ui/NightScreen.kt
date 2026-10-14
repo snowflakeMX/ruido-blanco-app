@@ -1,7 +1,5 @@
 package ruido.app.ui
 
-import android.view.Window
-import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,11 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -25,91 +23,98 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.delay
 import ruido.app.AppSettings
 import ruido.app.LiveState
-import ruido.core.NightEngine
 
 /**
- * Shown while the night runs: pure black (OLED pixels off) with dim ember text, at minimum
- * brightness. After the configured seconds it goes fully black (no light on AMOLED) and the
- * phone's own timeout turns the screen off.
- * A tap shows it again.
+ * Shown while the night runs. Readable mode: brightness from the settings and large warm
+ * text. After the configured seconds it turns fully black at minimum brightness (an AMOLED
+ * screen then emits no light) and the phone's own timeout switches the screen off. Any
+ * touch, or coming back to the app, makes it readable again.
+ *
+ * [onScreen] tells the activity how to set the window: brightness (0..1) and whether to
+ * keep the screen on.
  */
 @Composable
 fun NightScreen(
     live: LiveState,
     settings: AppSettings,
     onStop: () -> Unit,
-    onDiagnostics: () -> Unit,
-    window: Window,
+    onShowLevels: () -> Unit,
+    onScreen: (brightness: Float, keepOn: Boolean) -> Unit,
 ) {
-    var visible by remember { mutableStateOf(true) }
+    // 0 means "black right after starting"; a touch still shows it for a few seconds.
+    val awakeSeconds = if (settings.screenOnSeconds == 0) 10 else settings.screenOnSeconds
+    var awake by remember { mutableStateOf(settings.screenOnSeconds > 0) }
     var wake by remember { mutableIntStateOf(0) }
     var confirmStop by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) {
-        val attrs = window.attributes
-        attrs.screenBrightness = 0.01f
-        window.attributes = attrs
-        onDispose { }
-    }
-
     LifecycleResumeEffect(Unit) {
-        visible = true
-        wake++
+        if (wake > 0 || settings.screenOnSeconds > 0) wake++
         onPauseOrDispose { }
     }
 
-    LaunchedEffect(wake) {
-        visible = true
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        delay(settings.screenOnSeconds * 1000L)
-        visible = false
+    LaunchedEffect(wake, awakeSeconds) {
+        if (wake == 0 && !awake) {
+            onScreen(MIN_BRIGHTNESS, false)
+            return@LaunchedEffect
+        }
+        awake = true
+        onScreen(settings.nightBrightnessPercent / 100f, true)
+        delay(awakeSeconds * 1000L)
+        awake = false
         confirmStop = false
-        // All pixels black: an AMOLED screen emits no light. The phone's own timeout then turns it off.
-        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onScreen(MIN_BRIGHTNESS, false)
+    }
+
+    // Brightness changes in settings apply while readable.
+    LaunchedEffect(settings.nightBrightnessPercent) {
+        if (awake) onScreen(settings.nightBrightnessPercent / 100f, true)
     }
 
     Box(
         Modifier
             .fillMaxSize()
             .background(Night.Black)
+            .testTag("night-screen")
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { wake++ },
         contentAlignment = Alignment.Center,
     ) {
-        if (!visible) return@Box
+        if (!awake) return@Box
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(24.dp).testTag("night-awake"),
         ) {
-            Text(clock(System.currentTimeMillis()), color = Night.Ember, fontSize = 64.sp)
-            Text(phaseText(live), color = Night.Ember, fontSize = 18.sp)
-            live.endAtMs?.let { Text("Termina a las ${clock(it)}", color = Night.Ember) }
-            Text("${live.events} ruidos", color = Night.Ember)
-            Spacer(Modifier.height(24.dp))
-            OutlinedButton(onClick = {
-                if (confirmStop) onStop() else {
-                    confirmStop = true
-                    wake++
-                }
-            }) {
-                Text(if (confirmStop) "Tocá otra vez para terminar" else "Terminar noche", color = Night.Ember)
+            Text(clock(System.currentTimeMillis()), color = Night.Amber, fontSize = 80.sp)
+            Text(phaseText(live.phase), color = Night.Text, fontSize = 24.sp)
+            live.endAtMs?.let { Text("Termina a las ${clock(it)}", color = Night.TextDim, fontSize = 18.sp) }
+            Text(
+                if (live.events == 1) "1 ruido detectado" else "${live.events} ruidos detectados",
+                color = Night.TextDim, fontSize = 18.sp,
+            )
+            Spacer(Modifier.height(32.dp))
+            OutlinedButton(
+                onClick = {
+                    if (confirmStop) onStop() else {
+                        confirmStop = true
+                        wake++
+                    }
+                },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Night.Amber),
+                modifier = Modifier.testTag("stop-night"),
+            ) {
+                Text(if (confirmStop) "Tocá otra vez para terminar" else "Terminar noche", fontSize = 18.sp)
             }
-            TextButton(onClick = onDiagnostics) { Text("Diagnóstico", color = Night.Ember) }
+            TextButton(onClick = onShowLevels) { Text("Ver nivel del micrófono", color = Night.TextDim, fontSize = 16.sp) }
         }
     }
 }
 
-private fun phaseText(live: LiveState): String = when (live.phase) {
-    NightEngine.Phase.CALIBRATING_QUIET -> "Midiendo el silencio…"
-    NightEngine.Phase.CALIBRATING_LEAK -> "Probando el sonido…"
-    NightEngine.Phase.LISTENING -> "Escuchando"
-    NightEngine.Phase.PLAYING -> "Tapando ruido"
-    NightEngine.Phase.ENDED -> "Terminando"
-    null -> "Iniciando…"
-}
+/** Lowest brightness Android accepts without treating it as "off". */
+const val MIN_BRIGHTNESS = 0.01f
