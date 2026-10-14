@@ -19,7 +19,7 @@ object SoundPreview {
         thread = Thread({
             val settings = SettingsRepo.current
             val volume = MediaVolume(app)
-            val player = NoisePlayer(settings.color) { }
+            val player = NoisePlayer(settings.color, OwnSound.file(app)) { }
             try {
                 volume.set(settings.mediaVolumePercent)
                 player.start()

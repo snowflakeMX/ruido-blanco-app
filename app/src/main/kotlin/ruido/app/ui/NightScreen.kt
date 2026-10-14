@@ -92,8 +92,12 @@ fun NightScreen(
             modifier = Modifier.padding(24.dp).testTag("night-awake"),
         ) {
             Text(clock(System.currentTimeMillis()), color = Night.Amber, fontSize = 80.sp)
-            Text(phaseText(live.phase), color = Night.Text, fontSize = 24.sp)
+            Text(phaseText(live), color = Night.Text, fontSize = 24.sp)
             live.endAtMs?.let { Text("Termina a las ${clock(it)}", color = Night.TextDim, fontSize = 18.sp) }
+            val now = System.currentTimeMillis()
+            live.windows.firstOrNull { it.last >= now }?.let {
+                Text("Prevención de ${clock(it.first)} a ${clock(it.last + 1)}", color = Night.TextDim, fontSize = 18.sp)
+            }
             Text(
                 if (live.events == 1) "1 ruido detectado" else "${live.events} ruidos detectados",
                 color = Night.TextDim, fontSize = 18.sp,

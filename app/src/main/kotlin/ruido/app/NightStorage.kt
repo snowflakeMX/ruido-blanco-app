@@ -2,6 +2,7 @@ package ruido.app
 
 import android.content.Context
 import ruido.core.NightRecord
+import ruido.core.Observation
 import java.io.File
 
 /** A stored night plus what the file itself tells about it. */
@@ -49,15 +50,26 @@ class NightStorage(context: Context) {
     fun get(startMs: Long, runningStartMs: Long? = null): StoredNight? =
         all(runningStartMs).firstOrNull { it.startMs == startMs }
 
-    fun setWokeUp(startMs: Long, woke: Boolean?) {
+    fun setWokeUp(startMs: Long, woke: Boolean?) = edit(startMs) { it.copy(wokeUp = woke) }
+
+    /** Marks one noise as "not a neighbor" (or undoes it), so the pattern model ignores it. */
+    fun setDismissed(startMs: Long, eventStartMs: Long, dismissed: Boolean) = edit(startMs) { r ->
+        r.copy(events = r.events.map { if (it.startMs == eventStartMs) it.copy(dismissed = dismissed) else it })
+    }
+
+    private fun edit(startMs: Long, change: (NightRecord) -> NightRecord) {
         val f = file(startMs)
         if (!f.exists()) return
         val record = runCatching { NightRecord.fromCsv(f.readText()) }.getOrNull() ?: return
         val modified = f.lastModified()
-        save(record.copy(wokeUp = woke))
+        save(change(record))
         // Keep the "last alive" time of interrupted nights.
         if (record.endMs == null) f.setLastModified(modified)
     }
+
+    /** What the pattern model learns from: every stored night except [runningStartMs]. */
+    fun observations(runningStartMs: Long? = null): List<Observation> =
+        all(runningStartMs).filter { it.startMs != runningStartMs }.mapNotNull { Observation.of(it.record, it.shownEndMs) }
 
     fun delete(startMs: Long) {
         file(startMs).delete()

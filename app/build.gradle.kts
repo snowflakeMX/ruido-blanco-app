@@ -18,7 +18,14 @@ android {
         minSdk = 33
         targetSdk = 34
         versionCode = buildNumber
-        versionName = "0.2.$buildNumber"
+        versionName = "0.3.$buildNumber"
+        // The phone is 64-bit ARM; leaving out other CPUs keeps the sound recognition library small.
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    androidResources {
+        // The sound model is read in place (memory-mapped), so it must stay uncompressed.
+        noCompress += "tflite"
     }
 
     signingConfigs {
@@ -91,6 +98,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    // Runs the sound recognition model (YAMNet) on the phone. No network use.
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
 
     // Screen tests that run on the computer (Robolectric), with screenshots.
     testImplementation("junit:junit:4.13.2")

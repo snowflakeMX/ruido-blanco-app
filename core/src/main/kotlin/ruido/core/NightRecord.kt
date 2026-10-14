@@ -12,8 +12,15 @@ data class NoiseEvent(
     val startedPlayback: Boolean,
     /** True when masking was already playing. */
     val duringPlayback: Boolean,
+    /** What the sound seemed to be, when the classifier could tell. */
+    val kind: SoundKind? = null,
+    /** The user marked it as "not a neighbor" (a cough, the kid...). */
+    val dismissed: Boolean = false,
 ) {
     val durationMs: Long get() = endMs - startMs
+
+    /** Whether the noise teaches the pattern model anything about the neighbors. */
+    val fromNeighbors: Boolean get() = !dismissed && kind?.neighbors != false
 }
 
 /** A continuous stretch of masking playback. */
@@ -43,7 +50,7 @@ data class NightRecord(
         for (e in events) {
             appendLine(
                 "E,${e.startMs},${e.endMs},${fmt(e.peakExcessDb)},${fmt(e.peakLevelDb)}," +
-                    "${e.startedPlayback},${e.duringPlayback}",
+                    "${e.startedPlayback},${e.duringPlayback},${e.kind ?: ""},${e.dismissed}",
             )
         }
         for (s in spans) appendLine("P,${s.startMs},${s.endMs},${s.reason}")
@@ -71,6 +78,8 @@ data class NightRecord(
                         "E" -> events += NoiseEvent(
                             f[1].toLong(), f[2].toLong(), f[3].toDouble(), f[4].toDouble(),
                             f[5].toBooleanStrict(), f[6].toBooleanStrict(),
+                            kind = f.getOrNull(7)?.let { k -> SoundKind.entries.firstOrNull { it.name == k } },
+                            dismissed = f.getOrNull(8) == "true",
                         )
                         "P" -> spans += PlaybackSpan(f[1].toLong(), f[2].toLong(), PlaybackSpan.Reason.valueOf(f[3]))
                     }

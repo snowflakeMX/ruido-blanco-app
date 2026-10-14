@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import ruido.core.Levels
 import ruido.core.NightEngine
+import ruido.core.SoundKind
 
 /** What the listening service is doing right now, for the screens. */
 data class LiveState(
@@ -25,10 +26,22 @@ data class LiveState(
     val endAtMs: Long? = null,
     val audioSource: String = "",
     val error: String? = null,
+    /** Playing softly because noise usually comes now, not because of a noise. */
+    val preventing: Boolean = false,
+    /** Tonight's prevention windows. */
+    val windows: List<LongRange> = emptyList(),
+    /** What the last noise seemed to be. */
+    val lastKind: SoundKind? = null,
+    /** Whether sound recognition is working, or why not. */
+    val classifier: String = "",
 ) {
     /** Level a sound must reach to count as a noise right now. */
     val triggerDb: Double get() = expectedDb + thresholdDb
     val night: Boolean get() = running && !test
+    val testing: Boolean get() = running && test
+
+    /** State once listening stops: nothing running, no test, last numbers kept for reference. */
+    fun stopped() = copy(running = false, test = false, gain = 0.0, noisy = false, preventing = false)
 }
 
 object Live {

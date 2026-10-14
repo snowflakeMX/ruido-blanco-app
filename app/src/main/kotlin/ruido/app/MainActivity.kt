@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -34,9 +35,13 @@ import ruido.app.ui.HistoryScreen
 import ruido.app.ui.HomeScreen
 import ruido.app.ui.NightDetailScreen
 import ruido.app.ui.NightScreen
+import ruido.app.ui.PatternsScreen
 import ruido.app.ui.Readiness
 import ruido.app.ui.RuidoTheme
 import ruido.app.ui.SettingsScreen
+import ruido.core.NoiseColor
+import ruido.core.Patterns
+import java.time.ZoneId
 
 class MainActivity : ComponentActivity() {
 
@@ -46,6 +51,7 @@ class MainActivity : ComponentActivity() {
         data object History : Route
         data class Night(val startMs: Long) : Route
         data object Diagnostics : Route
+        data object Patterns : Route
     }
 
     private lateinit var storage: NightStorage
@@ -55,6 +61,13 @@ class MainActivity : ComponentActivity() {
 
     /** What to start once the permission dialog answers. */
     private var afterPermission: (() -> Unit)? = null
+
+    /** Progress or error of importing the user's own sound, shown in settings. */
+    private val ownSoundStatus = mutableStateOf<String?>(null)
+
+    private val pickSound = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) importOwnSound(uri)
+    }
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result[Manifest.permission.RECORD_AUDIO] == true) afterPermission?.invoke()
@@ -67,6 +80,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         SettingsRepo.init(this)
         storage = NightStorage(this)
+        // Opened from the quick settings tile: start the night right away.
+        if (savedInstanceState == null) handleStartIntent(intent)
         setContent {
             RuidoTheme {
                 // Surface sets the default text color; without it plain text is black on black.
@@ -75,8 +90,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleStartIntent(intent)
+    }
+
+    /** Set by the tile; the night starts once the app is on screen, as Android requires for the microphone. */
+    private var startWhenVisible = false
+
+    private fun handleStartIntent(intent: Intent?) {
+        if (intent?.component?.className != NightTile.START_ALIAS) return
+        setIntent(Intent(this, MainActivity::class.java))
+        startWhenVisible = true
+    }
+
     override fun onResume() {
         super.onResume()
+        if (startWhenVisible) {
+            startWhenVisible = false
+            if (!Live.state.value.running) withMicrophone { NightService.startNight(this) }
+        }
         resumes.intValue++
     }
 
@@ -114,7 +147,7 @@ class MainActivity : ComponentActivity() {
                     settings = settings,
                     lastNight = remember(nightsVersion, resumeCount, live.running) { storage.all(runningStart).firstOrNull() },
                     error = live.error,
-                    testRunning = live.test,
+                    testRunning = live.testing,
                     readiness = remember(resumeCount) { readiness() },
                     onStart = { withMicrophone { NightService.startNight(this@MainActivity) } },
                     onAnswer = { woke ->
@@ -124,6 +157,7 @@ class MainActivity : ComponentActivity() {
                     onOpenNight = { route = Route.Night(it) },
                     onSettings = { route = Route.Settings },
                     onHistory = { route = Route.History },
+                    onPatterns = { route = Route.Patterns },
                     onDiagnostics = { route = Route.Diagnostics },
                     onFixBattery = ::requestBatteryExemption,
                     onOpenAppSettings = ::openAppSettings,
@@ -136,7 +170,9 @@ class MainActivity : ComponentActivity() {
                     onPreviewSound = { SoundPreview.start(this@MainActivity) },
                     onStartTest = { withMicrophone { NightService.startTest(this@MainActivity) } },
                     onStopTest = { NightService.stop(this@MainActivity) },
-                    onBack = { if (live.test) NightService.stop(this@MainActivity); goBack() },
+                    onPickOwnSound = { pickSound.launch(arrayOf("audio/*")) },
+                    ownSoundStatus = ownSoundStatus.value,
+                    onBack = { if (live.testing) NightService.stop(this@MainActivity); goBack() },
                 )
                 Route.History -> HistoryScreen(
                     nights = remember(nightsVersion, resumeCount, live.running) { storage.all(runningStart) },
@@ -149,6 +185,10 @@ class MainActivity : ComponentActivity() {
                         storage.setWokeUp(r.startMs, woke)
                         nightsVersion++
                     },
+                    onDismissEvent = { eventMs, dismissed ->
+                        storage.setDismissed(r.startMs, eventMs, dismissed)
+                        nightsVersion++
+                    },
                     onShare = ::share,
                     onDelete = {
                         storage.delete(r.startMs)
@@ -158,8 +198,43 @@ class MainActivity : ComponentActivity() {
                     onBack = goBack,
                 )
                 Route.Diagnostics -> DiagnosticsScreen(live = live, onBack = goBack)
+                Route.Patterns -> {
+                    val zone = ZoneId.systemDefault()
+                    val nights = remember(nightsVersion, resumeCount, live.running) { storage.all(runningStart) }
+                    val now = remember(nightsVersion, resumeCount) { System.currentTimeMillis() }
+                    val observations = remember(nights) { storage.observations(runningStart) }
+                    PatternsScreen(
+                        patterns = remember(observations) { Patterns(observations, now, zone) },
+                        records = nights.map { it.record },
+                        preventionEnabled = settings.preventionEnabled,
+                        tonight = if (live.night) live.windows
+                        else remember(observations, settings) { Prevention.windows(observations, settings, now, settings.wakeAtMs(now), zone) },
+                        zone = zone,
+                        onBack = goBack,
+                    )
+                }
             }
         }
+    }
+
+    private fun importOwnSound(uri: Uri) {
+        ownSoundStatus.value = "Preparando el sonido…"
+        val name = runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        }.getOrNull() ?: "archivo"
+        Thread({
+            val error = OwnSound.import(applicationContext, uri)
+            runOnUiThread {
+                if (error == null) {
+                    SettingsRepo.update { it.copy(ownSoundName = name, color = NoiseColor.OWN) }
+                    ownSoundStatus.value = null
+                } else {
+                    ownSoundStatus.value = error
+                }
+            }
+        }, "ruido-import").start()
     }
 
     private fun withMicrophone(start: () -> Unit) {

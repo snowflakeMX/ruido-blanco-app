@@ -6,12 +6,18 @@ import android.media.AudioTrack
 import android.util.Log
 import ruido.core.NoiseColor
 import ruido.core.NoiseGenerator
+import java.io.File
 
 /**
  * Plays generated noise on its own thread. The gain comes from [gain] (0..1) and is
  * ramped per sample, so changes never click. While the gain is 0 the speaker is paused.
  */
-class NoisePlayer(color: NoiseColor, private val onError: (String) -> Unit) {
+class NoisePlayer(
+    color: NoiseColor,
+    /** The user's own sound, used when [color] is [NoiseColor.OWN]. */
+    private val ownFile: File? = null,
+    private val onError: (String) -> Unit,
+) {
     @Volatile var gain = 0.0
     @Volatile var color: NoiseColor = color
 
@@ -36,6 +42,7 @@ class NoisePlayer(color: NoiseColor, private val onError: (String) -> Unit) {
 
     private fun loop() {
         val generator = NoiseGenerator(color, seed = System.nanoTime())
+        val own = ownFile?.takeIf { it.exists() }?.let { f -> runCatching { OwnSound.Reader(f) }.getOrNull() }
         val minBuffer = AudioTrack.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
         val track = try {
             AudioTrack.Builder()
@@ -64,7 +71,6 @@ class NoisePlayer(color: NoiseColor, private val onError: (String) -> Unit) {
         var playing = false
         try {
             while (running) {
-                generator.color = color
                 val next = gain
                 if (next == 0.0 && current == 0.0) {
                     if (playing) {
@@ -76,7 +82,18 @@ class NoisePlayer(color: NoiseColor, private val onError: (String) -> Unit) {
                 if (!playing) {
                     track.play(); playing = true
                 }
-                generator.fill(chunk, current, next)
+                val color = color
+                if (color == NoiseColor.OWN && own != null) {
+                    val step = (next - current) / chunk.size
+                    var g = current
+                    for (i in chunk.indices) {
+                        g += step
+                        chunk[i] = (own.next() * g).coerceIn(-1.0, 1.0).toFloat()
+                    }
+                } else {
+                    generator.color = color
+                    generator.fill(chunk, current, next)
+                }
                 current = next
                 track.write(chunk, 0, chunk.size, AudioTrack.WRITE_BLOCKING)
             }

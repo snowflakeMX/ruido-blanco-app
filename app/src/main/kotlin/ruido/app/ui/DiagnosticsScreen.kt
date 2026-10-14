@@ -28,7 +28,7 @@ fun DiagnosticsScreen(live: LiveState, onBack: () -> Unit) {
             if (!live.running) {
                 Hint("La app no está escuchando. Iniciá la noche, o usá \"Probar detección\" en Ajustes, para ver los niveles en vivo.")
             } else {
-                Section(phaseText(live.phase)) {
+                Section(phaseText(live)) {
                     LevelMeter(live)
                     Line("Fondo aprendido", db(live.baselineDb))
                     Line("Fondo + sonido propio", db(live.expectedDb))
@@ -37,6 +37,9 @@ fun DiagnosticsScreen(live: LiveState, onBack: () -> Unit) {
                     Line("Volumen del ruido ahora", "${(live.gain * 100).toInt()} %")
                     Line("Ruidos / veces que sonó", "${live.events} / ${live.playbackStarts}")
                     Line("Fuente del micrófono", live.audioSource.ifEmpty { "—" })
+                    Line("Reconocimiento de sonidos", live.classifier.ifEmpty { "—" })
+                    Line("Último ruido", kindName(live.lastKind).ifEmpty { "—" })
+                    Line("Prevención esta noche", if (live.windows.isEmpty()) "ninguna" else windowsText(live.windows))
                 }
                 Hint("Los valores son relativos a este micrófono (0 dB es el máximo que puede captar), no los decibeles de un sonómetro.")
             }

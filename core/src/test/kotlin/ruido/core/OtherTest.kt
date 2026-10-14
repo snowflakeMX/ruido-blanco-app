@@ -84,8 +84,54 @@ class NightRecordTest {
     }
 
     @Test
+    fun kindAndDismissedRoundTripAndOldFilesStillParse() {
+        val r = NightRecord(
+            1000, 9000,
+            listOf(
+                NoiseEvent(2000, 2500, 18.4, -41.2, true, false, SoundKind.MUSIC, dismissed = false),
+                NoiseEvent(3000, 3500, 14.0, -45.0, false, true, null, dismissed = true),
+            ),
+            emptyList(),
+        )
+        assertEquals(r, NightRecord.fromCsv(r.toCsv()))
+        val old = NightRecord.fromCsv("N,1000,9000,\nE,2000,2500,18.4,-41.2,true,false\n")!!
+        assertEquals(null, old.events.single().kind)
+        assertTrue(old.events.single().fromNeighbors)
+    }
+
+    @Test
     fun openNightParses() {
         val r = NightRecord(1000, null, emptyList(), emptyList())
         assertEquals(r, NightRecord.fromCsv(r.toCsv()))
+    }
+}
+
+class SoundKindTest {
+    private val labels = listOf("Silence", "Snoring", "Pink noise", "Music", "Knock", "Speech", "Cough")
+
+    private fun scores(vararg pairs: Pair<String, Float>) =
+        FloatArray(labels.size).also { a -> for ((l, v) in pairs) a[labels.indexOf(l)] = v }
+
+    @Test
+    fun maskingNoiseAndSilenceAreIgnored() {
+        assertEquals(SoundKind.KNOCKS, SoundKind.classify(labels, scores("Pink noise" to 0.9f, "Knock" to 0.2f)))
+    }
+
+    @Test
+    fun clearSnoringIsARoomSound() {
+        assertEquals(SoundKind.ROOM, SoundKind.classify(labels, scores("Snoring" to 0.6f, "Music" to 0.1f)))
+    }
+
+    @Test
+    fun weakRoomGuessStaysANeighbor() {
+        assertEquals(SoundKind.OTHER, SoundKind.classify(labels, scores("Cough" to 0.1f, "Music" to 0.05f)))
+    }
+
+    @Test
+    fun musicAndVoices() {
+        assertEquals(SoundKind.MUSIC, SoundKind.classify(labels, scores("Music" to 0.7f, "Speech" to 0.3f)))
+        assertEquals(SoundKind.VOICES, SoundKind.ofLabel("Shout"))
+        assertEquals(SoundKind.DOORS, SoundKind.ofLabel("Slam"))
+        assertEquals(SoundKind.ROOM, SoundKind.ofLabel("Baby cry, infant cry"))
     }
 }

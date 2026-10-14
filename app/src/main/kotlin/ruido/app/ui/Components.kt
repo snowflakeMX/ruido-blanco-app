@@ -32,6 +32,7 @@ import ruido.app.LiveState
 import ruido.app.StoredNight
 import ruido.core.Levels
 import ruido.core.NightEngine
+import ruido.core.SoundKind
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -55,6 +56,25 @@ fun duration(ms: Long): String {
         else -> "${minutes / 60} h ${minutes % 60} min"
     }
 }
+
+fun phaseText(live: LiveState): String =
+    if (live.phase == NightEngine.Phase.PLAYING && live.preventing) "Prevención: sonando suave" else phaseText(live.phase)
+
+fun kindName(kind: SoundKind?): String = when (kind) {
+    SoundKind.MUSIC -> "música"
+    SoundKind.VOICES -> "voces"
+    SoundKind.KNOCKS -> "golpes"
+    SoundKind.DOORS -> "puerta"
+    SoundKind.STEPS -> "pasos"
+    SoundKind.DOG -> "perro"
+    SoundKind.TV -> "tele o radio"
+    SoundKind.ROOM -> "de la habitación"
+    SoundKind.OTHER -> "otro"
+    null -> ""
+}
+
+/** Prevention windows as "00:50 a 02:00, 03:10 a 04:00". */
+fun windowsText(windows: List<LongRange>): String = windows.joinToString(", ") { "${clock(it.first)} a ${clock(it.last + 1)}" }
 
 fun phaseText(phase: NightEngine.Phase?): String = when (phase) {
     NightEngine.Phase.CALIBRATING_QUIET -> "Midiendo el silencio…"

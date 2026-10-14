@@ -27,10 +27,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import ruido.app.StoredNight
 import ruido.core.NightRecord
+import ruido.core.PlaybackSpan
+import ruido.core.SoundKind
 
 @Composable
 fun HistoryScreen(nights: List<StoredNight>, onOpen: (Long) -> Unit, onBack: () -> Unit) {
@@ -82,6 +86,7 @@ fun NightSummaryCard(night: StoredNight, onClick: (() -> Unit)? = null, legend: 
 fun NightDetailScreen(
     night: StoredNight?,
     onAnswer: (Boolean?) -> Unit,
+    onDismissEvent: (eventStartMs: Long, dismissed: Boolean) -> Unit,
     onShare: (String) -> Unit,
     onDelete: () -> Unit,
     onBack: () -> Unit,
@@ -113,30 +118,53 @@ fun NightDetailScreen(
             Section("Ruidos (${r.events.size})") {
                 if (r.events.isEmpty()) Hint("No hubo ruidos por encima del umbral.")
                 for (e in r.events) {
-                    Row {
-                        Text(clock(e.startMs), Modifier.weight(0.25f), style = MaterialTheme.typography.bodyLarge)
-                        Text(duration(e.durationMs), Modifier.weight(0.25f))
-                        Text("+%.0f dB".format(e.peakExcessDb), Modifier.weight(0.2f))
-                        Text(
-                            when {
-                                e.startedPlayback -> "encendió"
-                                e.duringPlayback -> "ya sonaba"
-                                else -> "ignorado"
-                            },
-                            Modifier.weight(0.3f),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    val ignored = !e.fromNeighbors
+                    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { if (e.kind?.neighbors != false) onDismissEvent(e.startMs, !e.dismissed) }
+                            .testTag("event-${e.startMs}"),
+                    ) {
+                        Row {
+                            Text(
+                                clock(e.startMs), Modifier.weight(0.25f), style = MaterialTheme.typography.bodyLarge,
+                                color = if (ignored) dim else Color.Unspecified,
+                                textDecoration = if (ignored) TextDecoration.LineThrough else null,
+                            )
+                            Text(duration(e.durationMs), Modifier.weight(0.25f), color = if (ignored) dim else Color.Unspecified)
+                            Text("+%.0f dB".format(e.peakExcessDb), Modifier.weight(0.2f), color = if (ignored) dim else Color.Unspecified)
+                            Text(
+                                when {
+                                    e.startedPlayback -> "encendió"
+                                    e.duringPlayback -> "ya sonaba"
+                                    e.kind == SoundKind.ROOM -> "no encendió"
+                                    else -> "ignorado"
+                                },
+                                Modifier.weight(0.3f),
+                                color = dim,
+                            )
+                        }
+                        val note = listOfNotNull(
+                            e.kind?.let { kindName(it).replaceFirstChar { c -> c.uppercase() } },
+                            if (e.dismissed) "no fue un vecino" else null,
+                        ).joinToString(" · ")
+                        if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.bodyMedium, color = Night.Amber)
                     }
                 }
                 if (r.events.isNotEmpty()) {
-                    Hint("\"+dB\": cuánto superó al fondo. \"Ignorado\": llegó en los últimos 15 minutos antes de despertar.")
+                    Hint(
+                        "\"+dB\": cuánto superó al fondo. \"Ignorado\": llegó en los últimos 15 minutos antes de despertar. " +
+                            "Tocá un ruido para marcarlo como \"no fue un vecino\" (tos, la nena…): así no cuenta para aprender los horarios.",
+                    )
                 }
             }
 
             Section("Veces que sonó (${r.spans.size})") {
                 if (r.spans.isEmpty()) Hint("El ruido no se activó.")
                 for (span in r.spans) {
-                    Text("${clock(span.startMs)} a ${clock(span.endMs)} · ${duration(span.durationMs)}")
+                    val why = if (span.reason == PlaybackSpan.Reason.PREVENTIVE) " · prevención" else ""
+                    Text("${clock(span.startMs)} a ${clock(span.endMs)} · ${duration(span.durationMs)}$why")
                 }
             }
 
@@ -197,7 +225,9 @@ fun shareText(night: StoredNight): String = buildString {
         appendLine("Ruidos:")
         for (e in r.events) {
             appendLine("- ${clock(e.startMs)} · ${duration(e.durationMs)} · +%.0f dB (pico %.0f dBFS)".format(e.peakExcessDb, e.peakLevelDb) +
-                if (e.startedPlayback) " · encendió" else "")
+                (if (e.startedPlayback) " · encendió" else "") +
+                (e.kind?.let { " · ${kindName(it)}" } ?: "") +
+                (if (e.dismissed) " · no fue un vecino" else ""))
         }
     }
     appendLine()

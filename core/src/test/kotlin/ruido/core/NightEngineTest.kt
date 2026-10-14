@@ -40,12 +40,15 @@ class NightEngineTest {
 
     private fun run(room: Room, config: NightConfig, durationMs: Long, onTick: (Long) -> Unit = {}): Run {
         val engine = NightEngine(config, 0)
+        engineRef = engine
         val ticks = ArrayList<Pair<Long, NightEngine.Tick>>()
         var now = 0L
         while (now < durationMs) {
             onTick(now)
             // The microphone hears what was played during the previous window.
-            ticks += now to engine.tick(now, room.levelAt(now, engine.gain))
+            val tick = engine.tick(now, room.levelAt(now, engine.gain))
+            tick.startedEventMs?.let { openStart = it }
+            ticks += now to tick
             now += config.windowMs
         }
         return Run(engine, ticks)
@@ -220,4 +223,73 @@ class NightEngineTest {
         assertEquals(NightEngine.Phase.LISTENING, engine.phase)
         assertEquals(-50.0, engine.tick(now, -50.0).baselineDb, 0.6)
     }
+
+    @Test
+    fun preventiveWindowPlaysSoftlyAndStops() {
+        val window = (10 * MINUTE) until (20 * MINUTE)
+        val r = run(Room(), config.copy(preventive = listOf(window), preventiveVolume = 0.3), 25 * MINUTE)
+        assertEquals(0.0, r.gainAt(9 * MINUTE))
+        assertEquals(0.3, r.gainAt(15 * MINUTE), 1e-9)
+        assertTrue(r.engine.events.isEmpty(), "its own soft noise is not a noise")
+        val span = r.engine.spans.single()
+        assertEquals(PlaybackSpan.Reason.PREVENTIVE, span.reason)
+        assertTrue(span.endMs in (20 * MINUTE)..(20 * MINUTE + 25 * SECOND), "ends with the window: ${span.endMs}")
+        assertEquals(NightEngine.Phase.LISTENING, r.phaseAt(24 * MINUTE))
+    }
+
+    @Test
+    fun noiseDuringPreventionGoesToFullVolumeThenBack() {
+        val window = (10 * MINUTE) until (60 * MINUTE)
+        val room = Room().apply { noise(15 * MINUTE, 2 * SECOND, -20.0) }
+        val r = run(room, config.copy(preventive = listOf(window), preventiveVolume = 0.3, holdMs = 5 * MINUTE), 40 * MINUTE)
+        assertEquals(1.0, r.gainAt(17 * MINUTE), 1e-9)
+        assertEquals(0.3, r.gainAt(25 * MINUTE), 1e-9)
+        assertTrue(r.engine.events.single().duringPlayback)
+    }
+
+    @Test
+    fun noPreventionJustBeforeWakeTime() {
+        val end = 60 * MINUTE
+        val r = run(Room(), config.copy(endAtMs = end, preventive = listOf((46 * MINUTE) until end)), 55 * MINUTE)
+        assertTrue(r.engine.spans.isEmpty() && r.engine.phase != NightEngine.Phase.PLAYING)
+    }
+
+    @Test
+    fun roomSoundThatStartedPlaybackIsCalledOff() {
+        val room = Room().apply { noise(2 * MINUTE, 1 * SECOND, -40.0) }
+        val r = run(room, config, 5 * MINUTE) { now ->
+            // The classifier answers about a second after the noise began.
+            if (now == 2 * MINUTE + 1200) engineRef!!.classify(engineRef!!.events.firstOrNull()?.startMs ?: openStart!!, SoundKind.ROOM)
+        }
+        assertTrue(r.engine.spans.isEmpty(), "the playback is forgotten")
+        assertEquals(0.0, r.gainAt(4 * MINUTE))
+        val e = r.engine.events.single()
+        assertEquals(SoundKind.ROOM, e.kind)
+        assertTrue(!e.startedPlayback && !e.fromNeighbors)
+    }
+
+    @Test
+    fun neighborNoiseKeepsPlaying() {
+        val room = Room().apply { noise(2 * MINUTE, 1 * SECOND, -40.0) }
+        val r = run(room, config, 5 * MINUTE) { now ->
+            if (now == 2 * MINUTE + 1200) engineRef!!.classify(openStart!!, SoundKind.MUSIC)
+        }
+        assertEquals(1.0, r.gainAt(4 * MINUTE))
+        assertEquals(SoundKind.MUSIC, r.engine.events.single().kind)
+    }
+
+    @Test
+    fun adaptiveVolumeFollowsLoudness() {
+        val soft = Room().apply { noise(2 * MINUTE, 1 * SECOND, -47.0) } // ~13 dB over the background
+        val loud = Room().apply { noise(2 * MINUTE, 1 * SECOND, -25.0) }
+        val adaptive = config.copy(adaptiveVolume = true)
+        val gSoft = run(soft, adaptive, 4 * MINUTE).gainAt(3 * MINUTE)
+        val gLoud = run(loud, adaptive, 4 * MINUTE).gainAt(3 * MINUTE)
+        assertTrue(gSoft in 0.5..0.6, "soft $gSoft")
+        assertEquals(1.0, gLoud, 1e-9)
+    }
+
+    /** The engine of the run in progress and the start of its current noise, for callbacks. */
+    private var engineRef: NightEngine? = null
+    private var openStart: Long? = null
 }

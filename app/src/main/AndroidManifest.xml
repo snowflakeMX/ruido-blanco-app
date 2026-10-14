@@ -31,10 +31,28 @@
             </intent-filter>
         </activity>
 
+        <!-- Started only by the quick settings tile: not reachable from other apps. -->
+        <activity-alias
+            android:name=".StartNight"
+            android:exported="false"
+            android:targetActivity=".MainActivity" />
+
         <service
             android:name=".NightService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Quick settings tile. Only the system can bind it (BIND_QUICK_SETTINGS_TILE). -->
+        <service
+            android:name=".NightTile"
+            android:exported="true"
+            android:icon="@drawable/ic_notification"
+            android:label="Ruido blanco"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
 
     </application>
 </manifest>

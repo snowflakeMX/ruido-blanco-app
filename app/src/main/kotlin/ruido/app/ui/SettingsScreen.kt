@@ -18,19 +18,24 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import ruido.app.AppSettings
 import ruido.app.LiveState
+import ruido.core.ManualSlot
 import ruido.core.NightEngine
 import ruido.core.NoiseColor
 
@@ -44,10 +49,13 @@ fun SettingsScreen(
     onPreviewSound: () -> Unit,
     onStartTest: () -> Unit,
     onStopTest: () -> Unit,
+    onPickOwnSound: () -> Unit,
+    ownSoundStatus: String?,
     onBack: () -> Unit,
 ) {
     val s = settings
     var confirmReset by remember { mutableStateOf(false) }
+    var addingSlot by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     Column(Modifier.fillMaxSize()) {
@@ -75,12 +83,20 @@ fun SettingsScreen(
 
             Section("Sonido") {
                 Text("Tipo de ruido", style = MaterialTheme.typography.bodyLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (c in NoiseColor.entries) {
                         Choice(colorName(c), s.color == c, { onChange { it.copy(color = c) } }, "color-${c.name}")
                     }
                 }
-                Hint("Rosa y marrón suenan más graves y suelen tapar mejor voces y música de los vecinos.")
+                Hint("Rosa, marrón y ventilador suenan más graves y suelen tapar mejor voces y música de los vecinos.")
+                if (s.color == NoiseColor.OWN) {
+                    Text(
+                        ownSoundStatus ?: s.ownSoundName?.let { "Archivo: $it" } ?: "Todavía no elegiste un archivo: mientras tanto suena ruido rosa.",
+                        modifier = Modifier.testTag("own-sound-status"),
+                    )
+                    OutlinedButton(onClick = onPickOwnSound, modifier = Modifier.testTag("pick-own-sound")) { Text("Elegir archivo de audio") }
+                    Hint("Se copia dentro de la app y se repite sin cortes (hasta 5 minutos). Igualamos su volumen al de los otros sonidos.")
+                }
                 IntSlider(
                     "Volumen del ruido", s.volumePercent, 5..100, 5, { "$it %" },
                     { v -> onChange { it.copy(volumePercent = v) } }, "volume",
@@ -117,6 +133,50 @@ fun SettingsScreen(
                 )
             }
 
+            Section("Prevención") {
+                Toggle(
+                    "Encender antes de los ruidos habituales", s.preventionEnabled,
+                    { v -> onChange { it.copy(preventionEnabled = v) } }, "prevention",
+                    "Después de 7 noches aprende a qué horas suelen hacer ruido los vecinos y suena suave desde un rato antes.",
+                )
+                if (s.preventionEnabled) {
+                    IntSlider(
+                        "Cuánto antes empieza", s.preventionLeadMinutes, 0..30, 5, { "$it min" },
+                        { v -> onChange { it.copy(preventionLeadMinutes = v) } }, "prevention-lead",
+                    )
+                    IntSlider(
+                        "Volumen de la prevención", s.preventionVolumePercent, 20..100, 10, { "$it %" },
+                        { v -> onChange { it.copy(preventionVolumePercent = v) } }, "prevention-volume",
+                        hint = "Relativo al volumen del ruido. Si llega un ruido, sube al volumen normal.",
+                    )
+                    Text("Franjas fijas", style = MaterialTheme.typography.bodyLarge)
+                    if (s.manualSlots.isEmpty()) Hint("Por ejemplo: viernes de 01:00 a 04:00. Se suman a lo aprendido.")
+                    s.manualSlots.forEachIndexed { i, slot ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(slotText(slot), Modifier.weight(1f).testTag("slot-$i"))
+                            TextButton(onClick = { onChange { it.copy(manualSlots = it.manualSlots.filterIndexed { j, _ -> j != i }) } }) {
+                                Text("Quitar")
+                            }
+                        }
+                    }
+                    OutlinedButton(onClick = { addingSlot = true }, modifier = Modifier.testTag("add-slot")) { Text("Agregar franja") }
+                }
+            }
+
+            Section("Reconocimiento de sonidos") {
+                Toggle(
+                    "Ignorar ronquidos, tos y llanto", s.classifyEnabled,
+                    { v -> onChange { it.copy(classifyEnabled = v) } }, "classify",
+                    "Reconoce el sonido en el teléfono, sin internet y sin guardar audio. Si fue de la habitación, " +
+                        "el ruido se apaga enseguida y no cuenta para aprender los horarios. También anota qué fue (música, golpes, voces…).",
+                )
+                Toggle(
+                    "Volumen según el ruido", s.adaptiveVolume,
+                    { v -> onChange { it.copy(adaptiveVolume = v) } }, "adaptive",
+                    "Ruidos suaves se tapan a la mitad del volumen; los fuertes, al volumen elegido, nunca más.",
+                )
+            }
+
             Section("Pantalla de noche") {
                 Text("Tiempo legible después de tocarla", style = MaterialTheme.typography.bodyLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -137,6 +197,13 @@ fun SettingsScreen(
             TextButton(onClick = { confirmReset = true }) { Text("Volver a los valores por defecto") }
             Spacer(Modifier.height(16.dp))
         }
+    }
+
+    if (addingSlot) {
+        SlotDialog(
+            onAdd = { slot -> onChange { it.copy(manualSlots = it.manualSlots + slot) }; addingSlot = false },
+            onDismiss = { addingSlot = false },
+        )
     }
 
     if (confirmReset) {
@@ -174,7 +241,7 @@ private fun TestSection(
                 enabled = !previewPlaying && !live.running,
                 modifier = Modifier.weight(1f).testTag("preview-sound"),
             ) { Text(if (previewPlaying) "Sonando…" else "Probar sonido") }
-            if (live.test) {
+            if (live.testing) {
                 Button(onClick = onStopTest, modifier = Modifier.weight(1f).testTag("stop-test")) { Text("Detener prueba") }
             } else {
                 Button(onClick = onStartTest, enabled = !previewPlaying, modifier = Modifier.weight(1f).testTag("start-test")) {
@@ -182,8 +249,8 @@ private fun TestSection(
                 }
             }
         }
-        if (live.test) {
-            Text(phaseText(live.phase), style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("test-phase"))
+        if (live.testing) {
+            Text(phaseText(live), style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("test-phase"))
             LevelMeter(live)
             Row {
                 Stat("${live.events}", "ruidos detectados", Modifier.weight(1f))
@@ -203,4 +270,70 @@ private fun colorName(c: NoiseColor) = when (c) {
     NoiseColor.WHITE -> "Blanco"
     NoiseColor.PINK -> "Rosa"
     NoiseColor.BROWN -> "Marrón"
+    NoiseColor.RAIN -> "Lluvia"
+    NoiseColor.FAN -> "Ventilador"
+    NoiseColor.WAVES -> "Olas"
+    NoiseColor.OWN -> "Mi archivo"
+}
+
+fun slotText(slot: ManualSlot): String =
+    slot.nights.sorted().joinToString(", ") { NIGHT_NAMES[it] } + " · %02d:%02d a %02d:%02d".format(
+        slot.startMinute / 60, slot.startMinute % 60, slot.endMinute / 60, slot.endMinute % 60,
+    )
+
+@Composable
+private fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit, tag: String, hint: String) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = checked,
+                onCheckedChange = onChange,
+                colors = SwitchDefaults.colors(checkedTrackColor = Night.Amber, checkedThumbColor = Night.Black),
+                modifier = Modifier.testTag(tag),
+            )
+        }
+        Hint(hint)
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun SlotDialog(onAdd: (ManualSlot) -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var nights by remember { mutableStateOf(setOf(4)) }
+    var start by remember { mutableIntStateOf(60) }
+    var end by remember { mutableIntStateOf(4 * 60) }
+    fun pick(minute: Int, set: (Int) -> Unit) =
+        TimePickerDialog(context, { _, h, m -> set(h * 60 + m) }, minute / 60, minute % 60, true).show()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Franja fija") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Noches")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    NIGHT_NAMES.forEachIndexed { i, name ->
+                        Choice(name, i in nights, { nights = if (i in nights) nights - i else nights + i }, "slot-night-$i")
+                    }
+                }
+                Hint("La noche del viernes incluye la madrugada del sábado.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("De")
+                    OutlinedButton(onClick = { pick(start) { start = it } }) { Text("%02d:%02d".format(start / 60, start % 60)) }
+                    Text("a")
+                    OutlinedButton(onClick = { pick(end) { end = it } }) { Text("%02d:%02d".format(end / 60, end % 60)) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onAdd(ManualSlot(nights, start, end)) },
+                // Times count from noon: 23:00 to 03:00 is fine, 05:00 to 23:00 is not one night.
+                enabled = nights.isNotEmpty() && (end - 720 + 1440) % 1440 > (start - 720 + 1440) % 1440,
+                modifier = Modifier.testTag("confirm-slot"),
+            ) { Text("Agregar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }

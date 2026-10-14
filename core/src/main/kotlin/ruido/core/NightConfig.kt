@@ -26,6 +26,12 @@ data class NightConfig(
     val calibrateQuietMs: Long = 10 * SECOND,
     /** Plays the noise briefly at start to learn how much the microphone hears it. 0 disables. */
     val calibrateLeakMs: Long = 3 * SECOND,
+    /** Times when noise is expected: masking plays softly even without a noise. */
+    val preventive: List<LongRange> = emptyList(),
+    /** Gain during [preventive] windows, as a fraction of [volume]. */
+    val preventiveVolume: Double = 0.5,
+    /** Louder noises get louder masking: from half of [volume] up to [volume]. */
+    val adaptiveVolume: Boolean = false,
 ) {
     companion object {
         const val SECOND = 1_000L

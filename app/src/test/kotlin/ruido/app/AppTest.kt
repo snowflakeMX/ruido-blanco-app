@@ -3,6 +3,7 @@ package ruido.app
 import android.view.WindowManager
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -73,6 +74,26 @@ class AppTest {
         }
     }
 
+    /** Two weeks of nights: every Friday and Saturday night the neighbors are loud around 01:00. */
+    private fun seedPatternNights() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        File(context.filesDir, "nights").deleteRecursively()
+        val storage = NightStorage(context)
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        for (d in 1..14L) {
+            val evening = today.minusDays(d)
+            val start = evening.atTime(23, 0).atZone(zone).toInstant().toEpochMilli()
+            val end = evening.plusDays(1).atTime(7, 0).atZone(zone).toInstant().toEpochMilli()
+            val loud = evening.dayOfWeek == java.time.DayOfWeek.FRIDAY || evening.dayOfWeek == java.time.DayOfWeek.SATURDAY
+            val events = if (!loud) emptyList() else listOf(1 to 0, 1 to 30, 2 to 10).map { (h, m) ->
+                val t = evening.plusDays(1).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+                NoiseEvent(t, t + 2000, 16.0, -40.0, startedPlayback = false, duringPlayback = false, kind = ruido.core.SoundKind.MUSIC)
+            }
+            storage.save(NightRecord(start, end, events, emptyList(), wokeUp = if (loud) d % 2 == 0L else false))
+        }
+    }
+
     @Before
     fun reset() {
         Live.update { LiveState() }
@@ -137,6 +158,13 @@ class AppTest {
         compose.onNodeWithTag("level-meter").assertIsDisplayed()
         compose.onNodeWithTag("stop-test").assertIsDisplayed()
         shot("04-ajustes-prueba")
+
+        // The service stopped: the test controls go back to "start".
+        Live.update { it.stopped() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("start-test").assertIsDisplayed()
+        compose.onNodeWithTag("stop-test").assertDoesNotExist()
+        compose.onNodeWithTag("test-phase").assertDoesNotExist()
     }
 
     @Test
@@ -189,6 +217,52 @@ class AppTest {
         compose.onNodeWithTag("confirm-delete").performClick()
         compose.onNodeWithTag("night-$START").assertDoesNotExist()
         assertEquals(1, NightStorage(context).all().size)
+    }
+
+    @Test
+    fun preventionSlotsAndRecognitionSettings() {
+        SettingsRepo.update { AppSettings() }
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("add-slot").performScrollTo().performClick()
+        compose.onNodeWithTag("slot-night-5").performClick() // add Saturday night to the default Friday
+        compose.onNodeWithTag("confirm-slot").performClick()
+        compose.onNodeWithTag("slot-0").performScrollTo().assertTextEquals("Vie, Sáb · 01:00 a 04:00")
+        assertEquals(setOf(4, 5), SettingsRepo.current.manualSlots.single().nights)
+
+        compose.onNodeWithTag("adaptive").performScrollTo().performClick()
+        assertEquals(true, SettingsRepo.current.adaptiveVolume)
+        compose.onNodeWithTag("prevention").performScrollTo()
+        shot("10-ajustes-prevencion")
+
+        val prefs = compose.activity.getSharedPreferences("settings", 0)
+        assertEquals("45-60-240", prefs.getString("manual_slots", null))
+
+        compose.onNodeWithTag("color-OWN").performScrollTo().performClick()
+        compose.onNodeWithTag("own-sound-status").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("pick-own-sound").assertIsDisplayed()
+    }
+
+    @Test
+    fun patternsScreenShowsWhatItLearned() {
+        seedPatternNights()
+        compose.onNodeWithTag("open-patterns").performScrollTo().performClick()
+        compose.onNodeWithText("Aprendió de 14 noches", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("week-map").assertIsDisplayed()
+        shot("09-horarios")
+        compose.onNodeWithTag("weekdays").performScrollTo().assertIsDisplayed()
+        shot("09-horarios-abajo")
+    }
+
+    @Test
+    fun noiseCanBeMarkedAsNotANeighbor() {
+        seedNights()
+        compose.onNodeWithTag("open-history").performScrollTo().performClick()
+        compose.onNodeWithTag("night-$START").performClick()
+        compose.onNodeWithTag("event-${START + HOUR}").performScrollTo().performClick()
+        compose.onNodeWithTag("event-${START + HOUR}").assert(hasText("no fue un vecino", substring = true))
+        val stored = NightStorage(compose.activity).get(START)!!.record.events.first()
+        assertEquals(true, stored.dismissed)
+        shot("07-detalle-descartado")
     }
 
     @Test

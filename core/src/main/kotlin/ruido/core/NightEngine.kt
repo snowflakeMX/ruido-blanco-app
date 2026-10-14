@@ -29,6 +29,8 @@ class NightEngine(config: NightConfig, startMs: Long) {
         val finishedEvent: NoiseEvent? = null,
         /** Set on the tick a playback ends. */
         val finishedSpan: PlaybackSpan? = null,
+        /** Start time of a noise that began on this tick, so it can be classified. */
+        val startedEventMs: Long? = null,
     )
 
     var config = config
@@ -62,13 +64,27 @@ class NightEngine(config: NightConfig, startMs: Long) {
     private var eventDuringPlayback = false
 
     private var spanStartMs: Long? = null
-    private var lastNoiseMs = 0L
+    private var spanReason = PlaybackSpan.Reason.NOISE
+    /** The noise that started the current playback, and whether others came after it. */
+    private var spanTriggerMs: Long? = null
+    private var spanOtherNoise = false
+    /** The current playback was started by a room sound: fade out and forget it. */
+    private var cancelSpan = false
+    /** Gain for noises in the current playback (grows with louder noises when adaptive). */
+    private var noiseGain = 0.0
+    private var lastNoiseMs = Long.MIN_VALUE / 2
+    /** Noise times before each event, to undo an event later found to be a room sound. */
+    private val noiseBefore = HashMap<Long, Long>()
+    private var lastNoiseEventMs: Long? = null
+    private val kinds = HashMap<Long, SoundKind>()
+    private var startedEventMs: Long? = null
     private var forcedStop = false
 
     val events = mutableListOf<NoiseEvent>()
     val spans = mutableListOf<PlaybackSpan>()
 
     fun tick(nowMs: Long, levelDb: Double): Tick {
+        lastTickMs = nowMs
         val smoothedDb = smooth(levelDb)
         val expectedDb = Levels.powerToDb(Levels.dbToPower(baselineDb) + leakPowerAtUnitGain * gain * gain)
         val detecting = phase == Phase.LISTENING || phase == Phase.PLAYING
@@ -80,6 +96,7 @@ class NightEngine(config: NightConfig, startMs: Long) {
 
         var finishedEvent: NoiseEvent? = null
         var finishedSpan: PlaybackSpan? = null
+        startedEventMs = null
 
         when (phase) {
             Phase.CALIBRATING_QUIET -> {
@@ -124,7 +141,7 @@ class NightEngine(config: NightConfig, startMs: Long) {
         }
 
         stepGain()
-        return Tick(phase, gain, levelDb, smoothedDb, baselineDb, expectedDb, noisy, finishedEvent, finishedSpan)
+        return Tick(phase, gain, levelDb, smoothedDb, baselineDb, expectedDb, noisy, finishedEvent, finishedSpan, startedEventMs)
     }
 
     /** Ends the night now: fades out and closes any open noise or playback. */
@@ -145,9 +162,34 @@ class NightEngine(config: NightConfig, startMs: Long) {
             windowMs = config.windowMs,
             smoothingWindows = config.smoothingWindows,
             baselineWindowMs = config.baselineWindowMs,
+            preventive = config.preventive,
         )
-        if (phase == Phase.PLAYING && !forcedStop && target > 0) target = config.volume
+        if (phase == Phase.PLAYING && noiseGain > 0) noiseGain = config.volume
     }
+
+    /**
+     * Sets the kind of the noise that started at [eventStartMs], once the classifier is
+     * done (about a second later). A room sound (snoring, coughing, the kid) does not keep
+     * the masking on, and if it alone started it, the masking fades out again.
+     */
+    fun classify(eventStartMs: Long, kind: SoundKind) {
+        kinds[eventStartMs] = kind
+        val i = events.indexOfFirst { it.startMs == eventStartMs }
+        if (i >= 0) events[i] = events[i].copy(kind = kind)
+        if (kind.neighbors) return
+        if (spanTriggerMs == eventStartMs && !spanOtherNoise && spanReason == PlaybackSpan.Reason.NOISE && phase == Phase.PLAYING) {
+            cancelSpan = true
+        }
+        if (lastNoiseEventMs == eventStartMs) {
+            lastNoiseMs = noiseBefore[eventStartMs] ?: (Long.MIN_VALUE / 2)
+        }
+    }
+
+    /** True while playing softly because noise is expected now, not because of a noise. */
+    val preventing: Boolean
+        get() = phase == Phase.PLAYING && !noiseActive(lastTickMs) && inPreventive(lastTickMs)
+
+    private var lastTickMs = 0L
 
     /**
      * Forgets the background and the app's own noise and measures both again, for example
@@ -162,6 +204,7 @@ class NightEngine(config: NightConfig, startMs: Long) {
         leakPowerAtUnitGain = 0.0
         leakSamples.clear()
         forcedStop = false
+        cancelSpan = false
         target = 0.0
         gain = 0.0
         enter(Phase.CALIBRATING_QUIET, nowMs)
@@ -179,31 +222,66 @@ class NightEngine(config: NightConfig, startMs: Long) {
         val since = noisySinceMs ?: nowMs.also { noisySinceMs = it }
         if (eventStartMs == null && nowMs - since + config.windowMs >= config.minEventMs) {
             eventStartMs = since
+            startedEventMs = since
             eventPeakExcess = excess
             eventPeakLevel = levelDb
             eventDuringPlayback = phase == Phase.PLAYING
             eventStartedPlayback = false
-            onNoise(nowMs)
+            noiseBefore[since] = lastNoiseMs
+            onNoise(nowMs, since, excess)
         } else if (eventStartMs != null) {
             eventPeakExcess = max(eventPeakExcess, excess)
             eventPeakLevel = max(eventPeakLevel, levelDb)
-            onNoise(nowMs)
+            onNoise(nowMs, eventStartMs!!, eventPeakExcess)
         }
         return null
     }
 
-    private fun onNoise(nowMs: Long) {
+    private fun onNoise(nowMs: Long, eventMs: Long, excess: Double) {
         if (forcedStop) return
+        // Already known to come from the room: it does not keep the masking on.
+        if (kinds[eventMs]?.neighbors == false) return
         val endAt = config.endAtMs
         val tooLate = endAt != null && nowMs >= endAt - config.quietBeforeEndMs
         if (phase == Phase.LISTENING) {
             if (tooLate) return
-            enter(Phase.PLAYING, nowMs)
-            spanStartMs = nowMs
+            startSpan(nowMs, PlaybackSpan.Reason.NOISE)
+            spanTriggerMs = eventMs
             eventStartedPlayback = true
+        } else if (spanTriggerMs != eventMs) {
+            // A neighbor's noise after all: keep playing even if the first one was a room sound.
+            spanOtherNoise = true
+            cancelSpan = false
         }
         lastNoiseMs = nowMs
-        target = config.volume
+        lastNoiseEventMs = eventMs
+        noiseGain = max(noiseGain, gainFor(excess))
+        target = max(target, noiseGain)
+    }
+
+    /** Masking gain for a noise [excess] dB above the expected level. */
+    private fun gainFor(excess: Double): Double {
+        if (!config.adaptiveVolume) return config.volume
+        val louder = ((excess - config.thresholdDb) / ADAPTIVE_RANGE_DB).coerceIn(0.0, 1.0)
+        return config.volume * (0.5 + 0.5 * louder)
+    }
+
+    private fun noiseActive(nowMs: Long) = nowMs - lastNoiseMs < config.holdMs
+
+    private fun inPreventive(nowMs: Long): Boolean {
+        val endAt = config.endAtMs
+        if (endAt != null && nowMs >= endAt - config.quietBeforeEndMs) return false
+        return config.preventive.any { nowMs in it }
+    }
+
+    private fun startSpan(nowMs: Long, reason: PlaybackSpan.Reason) {
+        enter(Phase.PLAYING, nowMs)
+        spanStartMs = nowMs
+        spanReason = reason
+        spanTriggerMs = null
+        spanOtherNoise = false
+        cancelSpan = false
+        noiseGain = 0.0
     }
 
     private fun updatePlayback(nowMs: Long): PlaybackSpan? {
@@ -215,14 +293,27 @@ class NightEngine(config: NightConfig, startMs: Long) {
             target = 0.0
             return span
         }
+        if (phase == Phase.LISTENING) {
+            if (!forcedStop && gain == 0.0 && inPreventive(nowMs)) {
+                startSpan(nowMs, PlaybackSpan.Reason.PREVENTIVE)
+                target = config.volume * config.preventiveVolume
+            }
+            return null
+        }
         if (phase != Phase.PLAYING) return null
 
         val start = spanStartMs ?: nowMs
         if (!forcedStop && nowMs - start >= config.maxPlaybackMs) forcedStop = true
-        if (forcedStop || nowMs - lastNoiseMs >= config.holdMs) target = 0.0
+        target = when {
+            forcedStop || cancelSpan -> 0.0
+            noiseActive(nowMs) && noiseGain > 0 -> noiseGain
+            inPreventive(nowMs) -> config.volume * config.preventiveVolume
+            else -> 0.0
+        }
+        if (!noiseActive(nowMs)) noiseGain = 0.0
 
         if (target == 0.0 && gain == 0.0) {
-            val span = closeSpan(nowMs)
+            val span = if (cancelSpan) dropSpan() else closeSpan(nowMs)
             if (forcedStop) {
                 // The background may have changed for good: learn it again.
                 forcedStop = false
@@ -236,18 +327,29 @@ class NightEngine(config: NightConfig, startMs: Long) {
         return null
     }
 
+    /** Forgets a playback started by a room sound; its noise no longer counts as starting it. */
+    private fun dropSpan(): PlaybackSpan? {
+        val trigger = spanTriggerMs
+        spanStartMs = null
+        cancelSpan = false
+        val i = events.indexOfFirst { it.startMs == trigger }
+        if (i >= 0) events[i] = events[i].copy(startedPlayback = false)
+        if (eventStartMs == trigger) eventStartedPlayback = false
+        return null
+    }
+
     private fun closeEvent(nowMs: Long): NoiseEvent? {
         val start = eventStartMs ?: return null
         eventStartMs = null
         noisySinceMs = null
-        return NoiseEvent(start, nowMs, eventPeakExcess, eventPeakLevel, eventStartedPlayback, eventDuringPlayback)
+        return NoiseEvent(start, nowMs, eventPeakExcess, eventPeakLevel, eventStartedPlayback, eventDuringPlayback, kinds[start])
             .also { events += it }
     }
 
     private fun closeSpan(nowMs: Long): PlaybackSpan? {
         val start = spanStartMs ?: return null
         spanStartMs = null
-        return PlaybackSpan(start, nowMs, PlaybackSpan.Reason.NOISE).also { spans += it }
+        return PlaybackSpan(start, nowMs, spanReason).also { spans += it }
     }
 
     private fun enter(next: Phase, nowMs: Long) {
@@ -270,6 +372,11 @@ class NightEngine(config: NightConfig, startMs: Long) {
             gain = max(target, gain - volume * config.windowMs / max(1L, fade))
         }
         if (gain < 1e-9) gain = 0.0
+    }
+
+    private companion object {
+        /** Noises this many dB above the threshold get the full volume when adaptive. */
+        const val ADAPTIVE_RANGE_DB = 15.0
     }
 
     private fun smooth(levelDb: Double): Double {

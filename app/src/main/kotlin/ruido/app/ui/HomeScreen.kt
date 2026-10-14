@@ -43,6 +43,7 @@ fun HomeScreen(
     onOpenNight: (Long) -> Unit,
     onSettings: () -> Unit,
     onHistory: () -> Unit,
+    onPatterns: () -> Unit,
     onDiagnostics: () -> Unit,
     onFixBattery: () -> Unit,
     onOpenAppSettings: () -> Unit,
@@ -96,6 +97,7 @@ fun HomeScreen(
             OutlinedButton(onClick = onSettings, modifier = Modifier.weight(1f).testTag("open-settings")) { Text("Ajustes") }
             OutlinedButton(onClick = onHistory, modifier = Modifier.weight(1f).testTag("open-history")) { Text("Historial") }
         }
+        OutlinedButton(onClick = onPatterns, modifier = Modifier.fillMaxWidth().testTag("open-patterns")) { Text("Horarios de los vecinos") }
         TextButton(onClick = onDiagnostics, modifier = Modifier.testTag("open-diagnostics")) { Text("Diagnóstico") }
     }
 }
