@@ -111,6 +111,11 @@ class AppTest {
     fun homeScreen() {
         compose.onNodeWithTag("start-night").assertIsDisplayed()
         shot("01-inicio")
+
+        // Samsung's list can't be checked: the reminder hides once confirmed.
+        compose.onNodeWithTag("samsung-done").performScrollTo().performClick()
+        compose.onNodeWithText("En Samsung, una sola vez").assertDoesNotExist()
+        assertEquals(true, SettingsRepo.current.samsungDone)
     }
 
     @Test

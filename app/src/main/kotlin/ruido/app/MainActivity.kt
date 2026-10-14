@@ -161,6 +161,7 @@ class MainActivity : ComponentActivity() {
                     onDiagnostics = { route = Route.Diagnostics },
                     onFixBattery = ::requestBatteryExemption,
                     onOpenAppSettings = ::openAppSettings,
+                    onSamsungDone = { SettingsRepo.update { it.copy(samsungDone = true) } },
                 )
                 Route.Settings -> SettingsScreen(
                     settings = settings,

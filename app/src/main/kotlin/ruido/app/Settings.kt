@@ -47,6 +47,8 @@ data class AppSettings(
     val adaptiveVolume: Boolean = false,
     /** Name of the user's own sound file, if one was picked. */
     val ownSoundName: String? = null,
+    /** The user confirmed adding the app to Samsung's "never sleeping apps" list (apps cannot check it). */
+    val samsungDone: Boolean = false,
 ) {
     /** Next occurrence of the wake-up time after [nowMs]. */
     fun wakeAtMs(nowMs: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
@@ -130,6 +132,7 @@ object SettingsRepo {
             putBoolean("classify", next.classifyEnabled)
             putBoolean("adaptive_volume", next.adaptiveVolume)
             putString("own_sound_name", next.ownSoundName)
+            putBoolean("samsung_done", next.samsungDone)
             apply()
         }
     }
@@ -156,6 +159,7 @@ object SettingsRepo {
             classifyEnabled = p.getBoolean("classify", d.classifyEnabled),
             adaptiveVolume = p.getBoolean("adaptive_volume", d.adaptiveVolume),
             ownSoundName = p.getString("own_sound_name", null),
+            samsungDone = p.getBoolean("samsung_done", d.samsungDone),
         ).clamped()
     }
 

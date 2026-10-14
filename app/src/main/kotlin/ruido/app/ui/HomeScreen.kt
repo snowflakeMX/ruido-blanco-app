@@ -46,6 +46,7 @@ fun HomeScreen(
     onDiagnostics: () -> Unit,
     onFixBattery: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    onSamsungDone: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -74,12 +75,22 @@ fun HomeScreen(
                 }
             }
         }
-        Section("En Samsung, una sola vez") {
-            Hint(
-                "Ajustes › Batería › Límites de uso en segundo plano › Aplicaciones que nunca entran en suspensión › agregá Ruido blanco. " +
-                    "Sin esto, Samsung puede cerrar la app durante la noche.",
-            )
-            TextButton(onClick = onOpenAppSettings) { Text("Abrir ajustes de la app") }
+        // Apps cannot read Samsung's list, so it hides once the user says it's done, and comes
+        // back if a night gets cut off anyway.
+        val cutOff = lastNight?.interruptedAtMs != null
+        if (!settings.samsungDone || cutOff) {
+            Section(if (cutOff) "La última noche se cortó" else "En Samsung, una sola vez") {
+                Hint(
+                    "Ajustes › Batería › Límites de uso en segundo plano › Aplicaciones que nunca entran en suspensión › agregá Ruido blanco. " +
+                        "Sin esto, Samsung puede cerrar la app durante la noche.",
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onOpenAppSettings) { Text("Abrir ajustes de la app") }
+                    if (!settings.samsungDone) {
+                        TextButton(onClick = onSamsungDone, modifier = Modifier.testTag("samsung-done")) { Text("Ya lo hice") }
+                    }
+                }
+            }
         }
 
         if (lastNight != null) {
