@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -146,26 +147,26 @@ class AppTest {
         Live.update {
             LiveState(running = true, phase = NightEngine.Phase.LISTENING, startMs = START, endAtMs = START + 8 * HOUR, events = 3)
         }
-        compose.mainClock.advanceTimeBy(200)
-        compose.onNodeWithTag("night-awake").assertIsDisplayed()
+        frame(200)
+        displayed("night-awake")
         assertEquals(0.4f, brightness(), 0.001f)
         assertEquals(true, keepsScreenOn())
         shot("05-noche-legible")
 
-        compose.mainClock.advanceTimeBy(11_000)
+        frame(11_000)
         compose.onNodeWithTag("night-awake").assertDoesNotExist()
         assertEquals(0.01f, brightness(), 0.001f)
         assertEquals(false, keepsScreenOn())
 
         compose.onNodeWithTag("night-screen").performClick()
-        compose.mainClock.advanceTimeBy(200)
-        compose.onNodeWithTag("night-awake").assertIsDisplayed()
+        frame(200)
+        displayed("night-awake")
         assertEquals(0.4f, brightness(), 0.001f)
 
         // Night over: normal brightness again.
         Live.update { LiveState() }
-        compose.mainClock.advanceTimeBy(200)
-        compose.onNodeWithTag("start-night").assertIsDisplayed()
+        frame(200)
+        displayed("start-night")
         assertEquals(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, brightness())
     }
 
@@ -201,6 +202,26 @@ class AppTest {
         compose.onNodeWithTag("open-diagnostics").performScrollTo().performClick()
         compose.onNodeWithText("Sin procesar").assertIsDisplayed()
         shot("08-diagnostico")
+    }
+
+    /** Moves the paused clock and lets composition and layout catch up. */
+    private fun frame(ms: Long) {
+        // State from flows lands on the main looper, outside the paused clock: settle it,
+        // move time, then run one more frame so composition and layout both catch up.
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(ms)
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeByFrame()
+        compose.waitForIdle()
+    }
+
+    /** Like assertIsDisplayed, but a failure prints what is on screen. */
+    private fun displayed(tag: String) {
+        try {
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+        } catch (e: AssertionError) {
+            throw AssertionError("$tag not displayed. Screen:\n" + compose.onRoot(useUnmergedTree = true).printToString(), e)
+        }
     }
 
     private fun brightness(): Float {

@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -56,7 +55,7 @@ fun HistoryScreen(nights: List<StoredNight>, onOpen: (Long) -> Unit, onBack: () 
 
 /** Compact card: date, hours, counts and a timeline. */
 @Composable
-fun NightSummaryCard(night: StoredNight, onClick: (() -> Unit)? = null) {
+fun NightSummaryCard(night: StoredNight, onClick: (() -> Unit)? = null, legend: Boolean = false) {
     val r = night.record
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -73,7 +72,7 @@ fun NightSummaryCard(night: StoredNight, onClick: (() -> Unit)? = null) {
                 Stat("${r.playbackStarts}", "veces sonó", Modifier.weight(1f))
                 Stat(duration(r.totalPlaybackMs), "sonando", Modifier.weight(1f))
             }
-            Timeline(night)
+            Timeline(night, legend)
             if (onClick != null) Text("Ver detalle ›", color = MaterialTheme.colorScheme.primary)
         }
     }
@@ -99,7 +98,7 @@ fun NightDetailScreen(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            NightSummaryCard(night)
+            NightSummaryCard(night, legend = true)
             if (night.interruptedAtMs != null) {
                 Section {
                     Text(
@@ -166,8 +165,8 @@ fun NightDetailScreen(
 fun MorningQuestion(answer: Boolean?, onAnswer: (Boolean?) -> Unit) {
     Section("¿Los ruidos te despertaron?") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = answer == true, onClick = { onAnswer(if (answer == true) null else true) }, label = { Text("Sí") }, modifier = Modifier.testTag("woke-yes"))
-            FilterChip(selected = answer == false, onClick = { onAnswer(if (answer == false) null else false) }, label = { Text("No") }, modifier = Modifier.testTag("woke-no"))
+            Choice("Sí", answer == true, { onAnswer(if (answer == true) null else true) }, "woke-yes")
+            Choice("No", answer == false, { onAnswer(if (answer == false) null else false) }, "woke-no")
         }
         Hint("Sirve para saber si la app ayuda y para ajustar la sensibilidad.")
     }

@@ -16,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -78,12 +77,7 @@ fun SettingsScreen(
                 Text("Tipo de ruido", style = MaterialTheme.typography.bodyLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (c in NoiseColor.entries) {
-                        FilterChip(
-                            selected = s.color == c,
-                            onClick = { onChange { it.copy(color = c) } },
-                            label = { Text(colorName(c)) },
-                            modifier = Modifier.testTag("color-${c.name}"),
-                        )
+                        Choice(colorName(c), s.color == c, { onChange { it.copy(color = c) } }, "color-${c.name}")
                     }
                 }
                 Hint("Rosa y marrón suenan más graves y suelen tapar mejor voces y música de los vecinos.")
@@ -127,11 +121,9 @@ fun SettingsScreen(
                 Text("Tiempo legible después de tocarla", style = MaterialTheme.typography.bodyLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (sec in listOf(0, 10, 15, 30, 60)) {
-                        FilterChip(
-                            selected = s.screenOnSeconds == sec,
-                            onClick = { onChange { it.copy(screenOnSeconds = sec) } },
-                            label = { Text(if (sec == 0) "Negra al iniciar" else if (sec == 60) "1 min" else "$sec s") },
-                            modifier = Modifier.testTag("screen-on-$sec"),
+                        Choice(
+                            if (sec == 0) "Negra al iniciar" else if (sec == 60) "1 min" else "$sec s",
+                            s.screenOnSeconds == sec, { onChange { it.copy(screenOnSeconds = sec) } }, "screen-on-$sec",
                         )
                     }
                 }

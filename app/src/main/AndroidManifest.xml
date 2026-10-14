@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
         Only what the app needs. No INTERNET permission: audio and night records can
@@ -37,9 +36,5 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- Library component the app does not need (startup profile installer). -->
-        <receiver
-            android:name="androidx.profileinstaller.ProfileInstallReceiver"
-            tools:node="remove" />
     </application>
 </manifest>

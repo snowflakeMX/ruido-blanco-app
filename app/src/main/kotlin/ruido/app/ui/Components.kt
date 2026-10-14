@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,6 +49,7 @@ fun day(ms: Long): String =
 fun duration(ms: Long): String {
     val minutes = ms / 60_000
     return when {
+        ms < 1_000 -> "<1 s"
         ms < 60_000 -> "${ms / 1000} s"
         minutes < 60 -> "$minutes min"
         else -> "${minutes / 60} h ${minutes % 60} min"
@@ -120,6 +125,7 @@ fun IntSlider(
             },
             valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
+            colors = SliderDefaults.colors(activeTickColor = Color.Transparent, inactiveTickColor = Color.Transparent),
             modifier = Modifier.testTag(tag),
         )
         if (hint != null) Hint(hint)
@@ -147,18 +153,20 @@ fun LevelMeter(live: LiveState) {
     val measuring = live.phase == NightEngine.Phase.LISTENING || live.phase == NightEngine.Phase.PLAYING
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Canvas(Modifier.fillMaxWidth().height(36.dp).testTag("level-meter")) {
-            drawRect(Night.SurfaceHigh, size = size)
+            val top = size.height * 0.2f
+            val barHeight = size.height * 0.6f
+            drawRect(Night.SurfaceHigh, Offset(0f, top), Size(size.width, barHeight))
             if (live.levelDb > Levels.FLOOR_DB) {
                 drawRect(
                     if (live.noisy) Night.Red else Night.Amber,
-                    size = Size(size.width * frac(live.levelDb), size.height),
+                    Offset(0f, top), Size(size.width * frac(live.levelDb), barHeight),
                 )
             }
             if (measuring) {
                 val bx = size.width * frac(live.expectedDb)
-                drawRect(Night.TextDim, Offset(bx - 1.5f, 0f), Size(3f, size.height))
+                drawRect(Night.TextDim, Offset(bx - 3f, 0f), Size(6f, size.height))
                 val tx = size.width * frac(live.triggerDb)
-                drawRect(Night.Text, Offset(tx - 3f, 0f), Size(6f, size.height))
+                drawRect(Color.White, Offset(tx - 4f, 0f), Size(8f, size.height))
             }
         }
         Row {
@@ -172,7 +180,7 @@ fun db(v: Double) = if (v <= Levels.FLOOR_DB) "—" else "%.0f dB".format(v)
 
 /** The night from start to end: playback as bars, noises as ticks, with hour marks. */
 @Composable
-fun Timeline(night: StoredNight) {
+fun Timeline(night: StoredNight, legend: Boolean = false) {
     val end = night.shownEndMs ?: return
     val start = night.startMs
     if (end <= start) return
@@ -206,6 +214,22 @@ fun Timeline(night: StoredNight) {
             Text(clock(start), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(clock(end), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Hint("Rayas: ruidos detectados. Barras: tiempo que sonó el ruido.")
+        if (legend) Hint("Rayas: ruidos detectados. Barras: tiempo que sonó el ruido.")
     }
+}
+
+/** Filter chip that is clearly marked when selected. */
+@Composable
+fun Choice(label: String, selected: Boolean, onClick: () -> Unit, tag: String) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) },
+        colors = FilterChipDefaults.filterChipColors(
+            selectedContainerColor = Night.Amber,
+            selectedLabelColor = Night.Black,
+            labelColor = Night.Text,
+        ),
+        modifier = Modifier.testTag(tag),
+    )
 }
