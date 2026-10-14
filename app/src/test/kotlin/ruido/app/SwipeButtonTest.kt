@@ -2,7 +2,8 @@ package ruido.app
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeRight
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -51,7 +52,7 @@ class SwipeButtonTest {
     @Test
     fun screenReadersCanActivateIt() {
         show()
-        compose.onNodeWithTag("swipe").performClick()
+        compose.onNodeWithTag("swipe").performSemanticsAction(SemanticsActions.OnClick)
         assertEquals(1, done)
     }
 }
