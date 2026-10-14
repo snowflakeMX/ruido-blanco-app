@@ -1,0 +1,245 @@
+package ruido.core
+
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * Decides, every 100 ms window of microphone level, whether masking noise should play
+ * and at what gain. Pure logic: the Android service feeds it levels and applies [Tick.gain].
+ *
+ * The microphone also hears the noise this app plays. To avoid keeping itself on, the
+ * engine learns at start how loud its own noise sounds to the microphone ("leak") and,
+ * while playing, compares the level with background + leak instead of background alone.
+ */
+class NightEngine(private val config: NightConfig, startMs: Long) {
+
+    enum class Phase { CALIBRATING_QUIET, CALIBRATING_LEAK, LISTENING, PLAYING, ENDED }
+
+    data class Tick(
+        val phase: Phase,
+        /** Gain the player should use now, 0..1. */
+        val gain: Double,
+        val levelDb: Double,
+        val smoothedDb: Double,
+        val baselineDb: Double,
+        /** Background plus the app's own noise at the current gain. */
+        val expectedDb: Double,
+        val noisy: Boolean,
+        /** Set on the tick a noise ends. */
+        val finishedEvent: NoiseEvent? = null,
+        /** Set on the tick a playback ends. */
+        val finishedSpan: PlaybackSpan? = null,
+    )
+
+    var phase = Phase.CALIBRATING_QUIET
+        private set
+    var gain = 0.0
+        private set
+
+    private var target = 0.0
+    private var phaseStartMs = startMs
+
+    private val baseline = RollingPercentile(
+        max(1, (config.baselineWindowMs / config.windowMs).toInt()),
+    )
+    private var baselineDb = Levels.FLOOR_DB
+    private var leakPowerAtUnitGain = 0.0
+    private var leakCalibrated = false
+    private var leakSum = 0.0
+    private var leakCount = 0
+
+    private val recentPower = DoubleArray(max(1, config.smoothingWindows))
+    private var recentCount = 0
+    private var recentNext = 0
+
+    private var noisySinceMs: Long? = null
+    private var eventStartMs: Long? = null
+    private var eventPeakExcess = 0.0
+    private var eventPeakLevel = Levels.FLOOR_DB
+    private var eventStartedPlayback = false
+    private var eventDuringPlayback = false
+
+    private var spanStartMs: Long? = null
+    private var lastNoiseMs = 0L
+    private var forcedStop = false
+
+    val events = mutableListOf<NoiseEvent>()
+    val spans = mutableListOf<PlaybackSpan>()
+
+    fun tick(nowMs: Long, levelDb: Double): Tick {
+        val smoothedDb = smooth(levelDb)
+        val expectedDb = Levels.powerToDb(Levels.dbToPower(baselineDb) + leakPowerAtUnitGain * gain * gain)
+        val detecting = phase == Phase.LISTENING || phase == Phase.PLAYING
+        val excess = smoothedDb - expectedDb
+        val noisy = detecting && recentCount >= recentPower.size && excess >= config.thresholdDb
+
+        var finishedEvent: NoiseEvent? = null
+        var finishedSpan: PlaybackSpan? = null
+
+        when (phase) {
+            Phase.CALIBRATING_QUIET -> {
+                baseline.add(levelDb)
+                if (nowMs - phaseStartMs >= config.calibrateQuietMs) {
+                    baselineDb = baseline.percentile(config.baselinePercentile) ?: Levels.FLOOR_DB
+                    if (config.calibrateLeakMs > 0 && !leakCalibrated && config.volume > 0) {
+                        enter(Phase.CALIBRATING_LEAK, nowMs)
+                        target = config.volume
+                    } else {
+                        enter(Phase.LISTENING, nowMs)
+                    }
+                }
+            }
+
+            Phase.CALIBRATING_LEAK -> {
+                if (target > 0 && gain >= target) {
+                    leakSum += Levels.dbToPower(levelDb)
+                    leakCount++
+                    if (leakCount * config.windowMs >= config.calibrateLeakMs) {
+                        val leakPower = leakSum / leakCount - Levels.dbToPower(baselineDb)
+                        leakPowerAtUnitGain = max(0.0, leakPower) / (gain * gain)
+                        leakCalibrated = true
+                        target = 0.0
+                    }
+                } else if (target == 0.0 && gain == 0.0) {
+                    enter(Phase.LISTENING, nowMs)
+                }
+            }
+
+            Phase.LISTENING, Phase.PLAYING -> {
+                finishedEvent = trackEvent(nowMs, levelDb, excess, noisy)
+                finishedSpan = updatePlayback(nowMs)
+                if (phase == Phase.LISTENING && gain == 0.0 && !noisy && eventStartMs == null) {
+                    baseline.add(levelDb)
+                    baselineDb = baseline.percentile(config.baselinePercentile) ?: baselineDb
+                }
+            }
+
+            Phase.ENDED -> Unit
+        }
+
+        stepGain()
+        return Tick(phase, gain, levelDb, smoothedDb, baselineDb, expectedDb, noisy, finishedEvent, finishedSpan)
+    }
+
+    /** Ends the night now: fades out and closes any open noise or playback. */
+    fun finish(nowMs: Long) {
+        closeEvent(nowMs)
+        closeSpan(nowMs)
+        phase = Phase.ENDED
+        target = 0.0
+    }
+
+    /** How loud the app's own noise sounds to the microphone at the configured volume, or null if unknown. */
+    val leakDb: Double?
+        get() = if (leakCalibrated) Levels.powerToDb(leakPowerAtUnitGain * config.volume * config.volume) else null
+
+    private fun trackEvent(nowMs: Long, levelDb: Double, excess: Double, noisy: Boolean): NoiseEvent? {
+        if (!noisy) {
+            noisySinceMs = null
+            return closeEvent(nowMs)
+        }
+        val since = noisySinceMs ?: nowMs.also { noisySinceMs = it }
+        if (eventStartMs == null && nowMs - since + config.windowMs >= config.minEventMs) {
+            eventStartMs = since
+            eventPeakExcess = excess
+            eventPeakLevel = levelDb
+            eventDuringPlayback = phase == Phase.PLAYING
+            eventStartedPlayback = false
+            onNoise(nowMs)
+        } else if (eventStartMs != null) {
+            eventPeakExcess = max(eventPeakExcess, excess)
+            eventPeakLevel = max(eventPeakLevel, levelDb)
+            onNoise(nowMs)
+        }
+        return null
+    }
+
+    private fun onNoise(nowMs: Long) {
+        if (forcedStop) return
+        val endAt = config.endAtMs
+        val tooLate = endAt != null && nowMs >= endAt - config.quietBeforeEndMs
+        if (phase == Phase.LISTENING) {
+            if (tooLate) return
+            enter(Phase.PLAYING, nowMs)
+            spanStartMs = nowMs
+            eventStartedPlayback = true
+        }
+        lastNoiseMs = nowMs
+        target = config.volume
+    }
+
+    private fun updatePlayback(nowMs: Long): PlaybackSpan? {
+        val endAt = config.endAtMs
+        if (endAt != null && nowMs >= endAt) {
+            closeEvent(nowMs)
+            val span = closeSpan(nowMs)
+            phase = Phase.ENDED
+            target = 0.0
+            return span
+        }
+        if (phase != Phase.PLAYING) return null
+
+        val start = spanStartMs ?: nowMs
+        if (!forcedStop && nowMs - start >= config.maxPlaybackMs) forcedStop = true
+        if (forcedStop || nowMs - lastNoiseMs >= config.holdMs) target = 0.0
+
+        if (target == 0.0 && gain == 0.0) {
+            val span = closeSpan(nowMs)
+            if (forcedStop) {
+                // The background may have changed for good: learn it again.
+                forcedStop = false
+                baseline.clear()
+                enter(Phase.CALIBRATING_QUIET, nowMs)
+            } else {
+                enter(Phase.LISTENING, nowMs)
+            }
+            return span
+        }
+        return null
+    }
+
+    private fun closeEvent(nowMs: Long): NoiseEvent? {
+        val start = eventStartMs ?: return null
+        eventStartMs = null
+        noisySinceMs = null
+        return NoiseEvent(start, nowMs, eventPeakExcess, eventPeakLevel, eventStartedPlayback, eventDuringPlayback)
+            .also { events += it }
+    }
+
+    private fun closeSpan(nowMs: Long): PlaybackSpan? {
+        val start = spanStartMs ?: return null
+        spanStartMs = null
+        return PlaybackSpan(start, nowMs, PlaybackSpan.Reason.NOISE).also { spans += it }
+    }
+
+    private fun enter(next: Phase, nowMs: Long) {
+        phase = next
+        phaseStartMs = nowMs
+        if (next == Phase.LISTENING || next == Phase.CALIBRATING_QUIET) {
+            // Recent windows may contain the app's own noise at a gain that no longer applies.
+            recentCount = 0
+            recentNext = 0
+        }
+    }
+
+    private fun stepGain() {
+        val volume = max(config.volume, 1e-6)
+        if (gain < target) {
+            val fade = if (phase == Phase.CALIBRATING_LEAK) 500L else config.fadeInMs
+            gain = min(target, gain + volume * config.windowMs / max(1L, fade))
+        } else if (gain > target) {
+            val fade = if (phase == Phase.CALIBRATING_LEAK) 500L else config.fadeOutMs
+            gain = max(target, gain - volume * config.windowMs / max(1L, fade))
+        }
+        if (gain < 1e-9) gain = 0.0
+    }
+
+    private fun smooth(levelDb: Double): Double {
+        recentPower[recentNext] = Levels.dbToPower(levelDb)
+        recentNext = (recentNext + 1) % recentPower.size
+        if (recentCount < recentPower.size) recentCount++
+        var sum = 0.0
+        for (i in 0 until recentCount) sum += recentPower[i]
+        return Levels.powerToDb(sum / recentCount)
+    }
+}

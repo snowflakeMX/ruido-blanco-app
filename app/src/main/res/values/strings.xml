@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ruido blanco</string>
+    <string name="screen_off_service">Ruido blanco: apagar pantalla</string>
+    <string name="screen_off_description">Permite que Ruido blanco apague la pantalla durante la noche. No lee el contenido de la pantalla.</string>
+</resources>
