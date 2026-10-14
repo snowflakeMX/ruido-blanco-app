@@ -14,7 +14,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -104,13 +103,7 @@ fun SettingsScreen(settings: AppSettings, onChange: (AppSettings) -> Unit, onBac
                 )
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Apagar la pantalla del todo")
-                Hint("Si está apagado, la pantalla queda negra y se apaga con el tiempo normal del teléfono.")
-            }
-            Switch(checked = s.turnScreenOff, onCheckedChange = { onChange(s.copy(turnScreenOff = it)) })
-        }
+        Hint("Después de ese tiempo la pantalla queda totalmente negra, sin emitir luz, y el teléfono la apaga con su tiempo normal.")
 
         HorizontalDivider()
         OutlinedButton(onClick = { onChange(AppSettings()) }) { Text("Volver a los valores por defecto") }

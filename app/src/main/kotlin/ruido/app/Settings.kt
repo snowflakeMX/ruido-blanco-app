@@ -2,7 +2,6 @@ package ruido.app
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -35,8 +34,6 @@ data class AppSettings(
     /** Seconds the dim night screen stays visible; 0 = off right away. */
     val screenOnSeconds: Int = 10,
     val maxPlaybackMinutes: Int = 60,
-    /** Turn the screen fully off (needs the accessibility permission). */
-    val turnScreenOff: Boolean = true,
 ) {
     /** Next occurrence of the wake-up time after [nowMs]. */
     fun wakeAtMs(nowMs: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
@@ -72,7 +69,6 @@ class SettingsStore(private val context: Context) {
         val wakeMinute = intPreferencesKey("wake_minute")
         val screenOn = intPreferencesKey("screen_on_s")
         val maxPlayback = intPreferencesKey("max_playback_min")
-        val turnScreenOff = booleanPreferencesKey("turn_screen_off")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }
@@ -92,7 +88,6 @@ class SettingsStore(private val context: Context) {
             it[K.wakeMinute] = s.wakeMinute
             it[K.screenOn] = s.screenOnSeconds
             it[K.maxPlayback] = s.maxPlaybackMinutes
-            it[K.turnScreenOff] = s.turnScreenOff
         }
     }
 
@@ -110,7 +105,6 @@ class SettingsStore(private val context: Context) {
             wakeMinute = this[K.wakeMinute] ?: d.wakeMinute,
             screenOnSeconds = this[K.screenOn] ?: d.screenOnSeconds,
             maxPlaybackMinutes = this[K.maxPlayback] ?: d.maxPlaybackMinutes,
-            turnScreenOff = this[K.turnScreenOff] ?: d.turnScreenOff,
         )
     }
 }

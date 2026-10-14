@@ -31,12 +31,12 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.delay
 import ruido.app.AppSettings
 import ruido.app.LiveState
-import ruido.app.ScreenOffService
 import ruido.core.NightEngine
 
 /**
  * Shown while the night runs: pure black (OLED pixels off) with dim ember text, at minimum
- * brightness. After the configured seconds it goes fully black and turns the screen off.
+ * brightness. After the configured seconds it goes fully black (no light on AMOLED) and the
+ * phone's own timeout turns the screen off.
  * A tap shows it again.
  */
 @Composable
@@ -70,8 +70,8 @@ fun NightScreen(
         delay(settings.screenOnSeconds * 1000L)
         visible = false
         confirmStop = false
+        // All pixels black: an AMOLED screen emits no light. The phone's own timeout then turns it off.
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (settings.turnScreenOff) ScreenOffService.lockScreen()
     }
 
     Box(

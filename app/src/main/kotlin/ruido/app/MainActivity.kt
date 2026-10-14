@@ -75,7 +75,6 @@ class MainActivity : ComponentActivity() {
                         lastNight = remember(nightsVersion, live.running) { storage.latest() },
                         error = live.error,
                         batteryOptimized = remember(resumeCount) { !isIgnoringBatteryOptimizations() },
-                        screenOffEnabled = remember(resumeCount) { ScreenOffService.enabled },
                         onStart = ::startNight,
                         onAnswer = { start, woke ->
                             storage.setWokeUp(start, woke)
@@ -85,7 +84,6 @@ class MainActivity : ComponentActivity() {
                         onHistory = { screen = Screen.HISTORY },
                         onDiagnostics = { screen = Screen.DIAGNOSTICS },
                         onFixBattery = ::requestBatteryExemption,
-                        onEnableScreenOff = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     )
                     Screen.SETTINGS -> SettingsScreen(
                         settings = s,

@@ -30,14 +30,12 @@ fun HomeScreen(
     lastNight: NightRecord?,
     error: String?,
     batteryOptimized: Boolean,
-    screenOffEnabled: Boolean,
     onStart: () -> Unit,
     onAnswer: (Long, Boolean) -> Unit,
     onSettings: () -> Unit,
     onHistory: () -> Unit,
     onDiagnostics: () -> Unit,
     onFixBattery: () -> Unit,
-    onEnableScreenOff: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -61,13 +59,6 @@ fun HomeScreen(
                 "Android puede detener la app durante la noche. Permití que funcione sin restricciones de batería. " +
                     "En Samsung, agregala también a Ajustes › Batería › Límites de uso en segundo plano › Aplicaciones que nunca entran en suspensión.",
                 action = "Permitir" to onFixBattery,
-            )
-        }
-        if (settings.turnScreenOff && !screenOffEnabled) {
-            Warning(
-                "Para apagar la pantalla del todo, activá \"Ruido blanco: apagar pantalla\" en Accesibilidad › Aplicaciones instaladas. " +
-                    "Sin eso, la pantalla queda negra y se apaga con el tiempo normal del teléfono.",
-                action = "Abrir ajustes" to onEnableScreenOff,
             )
         }
 
