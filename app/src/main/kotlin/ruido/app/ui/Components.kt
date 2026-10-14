@@ -1,6 +1,30 @@
 package ruido.app.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -252,4 +276,75 @@ fun Choice(label: String, selected: Boolean, onClick: () -> Unit, tag: String) {
         ),
         modifier = Modifier.testTag(tag),
     )
+}
+
+/**
+ * A button that only acts when its knob is slid all the way to the right, so a stray
+ * touch in the dark can never start or end the night. [onDragStart] lets the night
+ * screen stay readable while sliding.
+ */
+@Composable
+fun SwipeButton(
+    text: String,
+    onComplete: () -> Unit,
+    tag: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    filled: Boolean = true,
+    onDragStart: () -> Unit = {},
+) {
+    val scope = rememberCoroutineScope()
+    val offset = remember { Animatable(0f) }
+    var trackWidth by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val knob = 64.dp
+    val knobPx = with(density) { knob.toPx() }
+    val maxOffset = (trackWidth - knobPx).coerceAtLeast(1f)
+    val color = if (enabled) Night.Amber else Night.AmberDim
+    Box(
+        modifier
+            .height(knob + 8.dp)
+            .fillMaxWidth()
+            .onSizeChanged { trackWidth = it.width }
+            .background(if (filled) color.copy(alpha = 0.25f) else Color.Transparent, RoundedCornerShape(50))
+            .border(2.dp, color, RoundedCornerShape(50))
+            .semantics(mergeDescendants = true) {
+                // Screen readers and tests can still activate it directly.
+                if (enabled) onClick(text) { onComplete(); true } else disabled()
+            }
+            .testTag(tag)
+            .draggable(
+                enabled = enabled,
+                orientation = Orientation.Horizontal,
+                state = rememberDraggableState { delta ->
+                    scope.launch { offset.snapTo((offset.value + delta).coerceIn(0f, maxOffset)) }
+                },
+                onDragStarted = { onDragStart() },
+                onDragStopped = {
+                    if (offset.value >= maxOffset * 0.85f) {
+                        offset.snapTo(maxOffset)
+                        onComplete()
+                    }
+                    offset.animateTo(0f)
+                },
+            ),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text,
+            color = color,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(start = knob + 8.dp, end = 16.dp),
+        )
+        Box(
+            Modifier
+                .offset { IntOffset(offset.value.roundToInt(), 0) }
+                .padding(4.dp)
+                .size(knob)
+                .background(color, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Text("›››", color = Night.Black, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+    }
 }

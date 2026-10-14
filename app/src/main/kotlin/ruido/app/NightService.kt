@@ -360,6 +360,7 @@ class NightService : Service() {
         private const val SAMPLE_RATE = 16_000
         /** The classifier hears 0.975 s: wait that long after a noise starts, plus a little before it. */
         private const val CLASSIFY_AFTER_MS = 900L
+        private const val FORCE_STOP_AFTER_MS = 3_000L
         /** Saved often, so a night cut off by Android still shows when it stopped. */
         private const val SAVE_EVERY_MS = 60 * 1000L
 
@@ -371,8 +372,25 @@ class NightService : Service() {
             context.startForegroundService(Intent(context, NightService::class.java).setAction(ACTION_TEST))
         }
 
+        /**
+         * Ends the night or the test. Asks the service to stop cleanly; if that request
+         * cannot be delivered, or the service is still listening a few seconds later,
+         * stops the service outright (its onDestroy releases the microphone and speaker).
+         */
         fun stop(context: Context) {
-            context.startService(Intent(context, NightService::class.java).setAction(ACTION_STOP))
+            val app = context.applicationContext
+            val service = Intent(app, NightService::class.java)
+            val stopping = Live.state.value.startMs
+            runCatching { app.startService(Intent(service).setAction(ACTION_STOP)) }
+                .onFailure { Log.e(TAG, "stop", it); app.stopService(service) }
+            Handler(Looper.getMainLooper()).postDelayed({
+                // Only the same night: a new one started in the meantime must keep running.
+                if (Live.state.value.running && Live.state.value.startMs == stopping) {
+                    Log.w(TAG, "still running after stop: forcing")
+                    app.stopService(service)
+                    Live.update { it.stopped() }
+                }
+            }, FORCE_STOP_AFTER_MS)
         }
     }
 }

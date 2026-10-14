@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,7 +50,6 @@ fun NightScreen(
     val awakeSeconds = if (settings.screenOnSeconds == 0) 10 else settings.screenOnSeconds
     var awake by remember { mutableStateOf(settings.screenOnSeconds > 0) }
     var wake by remember { mutableIntStateOf(0) }
-    var confirmStop by remember { mutableStateOf(false) }
 
     LifecycleResumeEffect(Unit) {
         if (wake > 0 || settings.screenOnSeconds > 0) wake++
@@ -68,7 +65,6 @@ fun NightScreen(
         onScreen(settings.nightBrightnessPercent / 100f, true)
         delay(awakeSeconds * 1000L)
         awake = false
-        confirmStop = false
         onScreen(MIN_BRIGHTNESS, false)
     }
 
@@ -103,18 +99,10 @@ fun NightScreen(
                 color = Night.TextDim, fontSize = 18.sp,
             )
             Spacer(Modifier.height(32.dp))
-            OutlinedButton(
-                onClick = {
-                    if (confirmStop) onStop() else {
-                        confirmStop = true
-                        wake++
-                    }
-                },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Night.Amber),
-                modifier = Modifier.testTag("stop-night"),
-            ) {
-                Text(if (confirmStop) "Tocá otra vez para terminar" else "Terminar noche", fontSize = 18.sp)
-            }
+            SwipeButton(
+                "Deslizá para terminar", onStop, "stop-night",
+                filled = false, onDragStart = { wake++ },
+            )
             TextButton(onClick = onShowLevels) { Text("Ver nivel del micrófono", color = Night.TextDim, fontSize = 16.sp) }
         }
     }

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -54,11 +53,7 @@ fun HomeScreen(
     ) {
         Text("Ruido blanco", style = MaterialTheme.typography.headlineMedium)
 
-        Button(
-            onClick = onStart,
-            enabled = !testRunning,
-            modifier = Modifier.fillMaxWidth().height(80.dp).testTag("start-night"),
-        ) { Text("Iniciar noche", fontSize = 24.sp) }
+        SwipeButton("Deslizá para iniciar la noche", onStart, "start-night", enabled = !testRunning)
         Hint(
             if (testRunning) "Hay una prueba de detección en curso. Detenela en Ajustes para iniciar la noche."
             else "Termina sola a las %02d:%02d. Dejá el teléfono enchufado, cerca de la pared de los vecinos y lejos de las camas."
