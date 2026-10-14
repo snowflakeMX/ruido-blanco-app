@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ruido.app.AppTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-14T19:15:29.628Z" hostname="runnervmmprz5" time="16.419">
+  <properties/>
+  <testcase name="nightScreenDimsAndWakesOnTouch" classname="ruido.app.AppTest" time="11.034"/>
+  <testcase name="settingsSlidersChangeAndPersist" classname="ruido.app.AppTest" time="1.438"/>
+  <testcase name="preventionSlotsAndRecognitionSettings" classname="ruido.app.AppTest" time="0.861"/>
+  <testcase name="patternsScreenShowsWhatItLearned" classname="ruido.app.AppTest" time="0.705"/>
+  <testcase name="historyListDetailAndDelete" classname="ruido.app.AppTest" time="0.883"/>
+  <testcase name="noiseCanBeMarkedAsNotANeighbor" classname="ruido.app.AppTest" time="0.475"/>
+  <testcase name="settingsTestModeShowsLiveLevel" classname="ruido.app.AppTest" time="0.37"/>
+  <testcase name="homeScreen" classname="ruido.app.AppTest" time="0.298"/>
+  <testcase name="diagnosticsWhileListening" classname="ruido.app.AppTest" time="0.354"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

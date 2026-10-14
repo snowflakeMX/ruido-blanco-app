@@ -1,0 +1,1 @@
+-rw-r--r-- 1 runner runner 9344283 Oct 14 19:17 app/build/outputs/apk/release/app-release.apk
