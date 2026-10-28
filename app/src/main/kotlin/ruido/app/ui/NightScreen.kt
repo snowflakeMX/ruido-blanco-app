@@ -92,7 +92,7 @@ fun NightScreen(
             Text(phaseText(live), color = Night.Text, fontSize = 24.sp)
             live.endAtMs?.let { Text("Termina a las ${clock(it)}", color = Night.TextDim, fontSize = 18.sp) }
             live.constantUntilMs?.let {
-                Text("Constante hasta las ${clock(it)}, después escucha", color = Night.TextDim, fontSize = 18.sp)
+                Text("Escucha desde las ${clock(it)}", color = Night.TextDim, fontSize = 18.sp)
             }
             Text(
                 if (live.events == 1) "1 ruido detectado" else "${live.events} ruidos detectados",

@@ -261,7 +261,7 @@ class AppTest {
         }
         frame(200)
         compose.onNodeWithText("Ruido constante", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Constante hasta las", substring = true, useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithText("Escucha desde las", substring = true, useUnmergedTree = true).assertIsDisplayed()
         shot("05-noche-constante")
 
         compose.onNodeWithTag("end-constant", useUnmergedTree = true).performSemanticsAction(SemanticsActions.OnClick)

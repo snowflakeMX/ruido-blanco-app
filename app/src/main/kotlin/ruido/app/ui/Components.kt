@@ -251,7 +251,7 @@ fun Choice(label: String, selected: Boolean, onClick: () -> Unit, tag: String, m
     FilterChip(
         selected = selected,
         onClick = onClick,
-        label = { Text(label) },
+        label = { Text(label, maxLines = 1, softWrap = false) },
         colors = FilterChipDefaults.filterChipColors(
             selectedContainerColor = Night.Amber,
             selectedLabelColor = Night.Black,
