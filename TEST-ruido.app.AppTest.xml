@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ruido.app.AppTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-28T19:16:58.433Z" hostname="runnervm48cm3" time="17.138">
+  <properties/>
+  <testcase name="nightScreenDimsAndWakesOnTouch" classname="ruido.app.AppTest" time="12.478"/>
+  <testcase name="constantNoiseIsChosenOnHome" classname="ruido.app.AppTest" time="0.533"/>
+  <testcase name="settingsSlidersChangeAndPersist" classname="ruido.app.AppTest" time="1.007"/>
+  <testcase name="oldSettingsAreCleanedUp" classname="ruido.app.AppTest" time="0.12"/>
+  <testcase name="historyListDetailAndDelete" classname="ruido.app.AppTest" time="0.861"/>
+  <testcase name="settingsTestModeShowsLiveLevel" classname="ruido.app.AppTest" time="0.381"/>
+  <testcase name="nightScreenDuringConstantNoise" classname="ruido.app.AppTest" time="0.278"/>
+  <testcase name="homeScreen" classname="ruido.app.AppTest" time="0.308"/>
+  <testcase name="historyShowsTrends" classname="ruido.app.AppTest" time="0.466"/>
+  <testcase name="adaptiveVolumeAndOwnSound" classname="ruido.app.AppTest" time="0.444"/>
+  <testcase name="diagnosticsWhileListening" classname="ruido.app.AppTest" time="0.262"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

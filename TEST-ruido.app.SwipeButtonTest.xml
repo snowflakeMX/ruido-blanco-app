@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ruido.app.SwipeButtonTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-28T19:17:15.585Z" hostname="runnervm48cm3" time="2.316">
+  <properties/>
+  <testcase name="fullSlideActsOnce" classname="ruido.app.SwipeButtonTest" time="2.08"/>
+  <testcase name="screenReadersCanActivateIt" classname="ruido.app.SwipeButtonTest" time="0.063"/>
+  <testcase name="touchDoesNothing" classname="ruido.app.SwipeButtonTest" time="0.068"/>
+  <testcase name="halfSlideDoesNothing" classname="ruido.app.SwipeButtonTest" time="0.105"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
