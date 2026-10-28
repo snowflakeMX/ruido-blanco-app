@@ -135,7 +135,7 @@ private fun Check(ok: Boolean, title: String, detail: String) {
 }
 
 /** Choices for the constant noise at the start of the night, in minutes; 0 = none. */
-val CONSTANT_CHOICES = listOf(0, 30, 60, 90, 120, 180)
+val CONSTANT_CHOICES = listOf(0, 60, 90, 120, 180)
 
 fun constantText(minutes: Int): String = when {
     minutes == 0 -> "No"
@@ -144,10 +144,9 @@ fun constantText(minutes: Int): String = when {
     else -> "%d:%02d h".format(minutes / 60, minutes % 60)
 }
 
-/** Short label that fits six chips in one row. */
+/** Short label that fits five chips in one row. */
 private fun chipText(minutes: Int): String = when (minutes) {
     0 -> "No"
-    30 -> "½ h"
     90 -> "1½ h"
     else -> "${minutes / 60} h"
 }

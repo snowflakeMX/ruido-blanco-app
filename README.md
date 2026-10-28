@@ -18,7 +18,7 @@ El PRD vigente está en el proyecto ("PRD v2").
 
 ## Ruido constante al empezar
 
-En el inicio se elige si la noche empieza con ruido constante (30 min a 3 h). Ese tiempo suena sin parar y sin escuchar; después baja, mide el silencio y sigue sola con la detección. Desde la pantalla de noche se puede pasar a escuchar antes. Sirve para dormir a la nena y salir del cuarto sin tener que usar otra app.
+En el inicio se elige si la noche empieza con ruido constante (1 a 3 h). Ese tiempo suena sin parar y sin escuchar; después baja, mide el silencio y sigue sola con la detección. Desde la pantalla de noche se puede pasar a escuchar antes. Sirve para dormir a la nena y salir del cuarto sin tener que usar otra app.
 
 El aprendizaje de horarios y el reconocimiento de sonidos se quitaron después de 14 noches de uso: las noches son muy distintas entre sí y encendían el ruido sin necesidad. En el historial quedan las tendencias semana a semana.
 
