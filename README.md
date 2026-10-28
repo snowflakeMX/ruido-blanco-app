@@ -16,15 +16,11 @@ El PRD vigente está en el proyecto ("PRD v2").
 3. Sigue sonando el tiempo de permanencia después del último ruido y luego baja.
 4. A la hora de despertar termina sola. 15 min antes ya no empieza a sonar.
 
-## Prevención y aprendizaje
+## Ruido constante al empezar
 
-- Después de 7 noches aprende a qué horas suelen hacer ruido los vecinos (franjas de 15 min por noche de la semana, con más peso para las noches recientes) y suena suave desde un rato antes. Lo aprendido se ve en "Horarios de los vecinos", con un mapa semanal y tendencias.
-- En Ajustes se pueden agregar franjas fijas ("viernes de 01:00 a 04:00").
-- En el detalle de una noche, tocar un ruido lo marca como "no fue un vecino" y deja de contar para aprender.
+En el inicio se elige si la noche empieza con ruido constante (30 min a 3 h). Ese tiempo suena sin parar y sin escuchar; después baja, mide el silencio y sigue sola con la detección. Desde la pantalla de noche se puede pasar a escuchar antes. Sirve para dormir a la nena y salir del cuarto sin tener que usar otra app.
 
-## Reconocimiento de sonidos
-
-Con YAMNet (`app/src/main/assets/yamnet.tflite`, modelo de Google con licencia Apache 2.0, SHA-256 `10c95ea3eb9a7bb4cb8bddf6feb023250381008177ac162ce169694d05c317de`) la app reconoce en el teléfono, sin internet, qué fue cada ruido. Si fue un ronquido, tos o llanto, el ruido se apaga enseguida y no cuenta para aprender. Escucha solo el segundo posterior al inicio del ruido y lo descarta: nunca se guarda audio.
+El aprendizaje de horarios y el reconocimiento de sonidos se quitaron después de 14 noches de uso: las noches son muy distintas entre sí y encendían el ruido sin necesidad. En el historial quedan las tendencias semana a semana.
 
 ## Sonidos y atajo
 
@@ -43,7 +39,7 @@ El APK se firma siempre con la misma clave (`app/signing/`), así cada versión 
 ## Seguridad
 
 - Sin permiso de internet: nada sale del teléfono. Sin copias en la nube ni transferencia entre dispositivos.
-- La única librería extra es TensorFlow Lite, para el reconocimiento de sonidos.
+- Sin librerías extra: solo AndroidX y Jetpack Compose.
 - Permisos: micrófono, notificaciones, servicio en primer plano de micrófono, mantener la CPU despierta y pedir excepción de batería. Nada más.
 - El servicio no se exporta. El atajo de ajustes rápidos solo lo puede usar el sistema, y la entrada que inicia la noche desde el atajo no es accesible para otras apps. Solo la pantalla de noche se muestra sobre la pantalla bloqueada; el resto pide desbloquear.
 - Las acciones de GitHub están fijadas por hash y el release solo se publica desde este repositorio.

@@ -2,6 +2,8 @@ package ruido.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +32,7 @@ data class Readiness(
     val batteryUnrestricted: Boolean,
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     settings: AppSettings,
@@ -42,7 +45,7 @@ fun HomeScreen(
     onOpenNight: (Long) -> Unit,
     onSettings: () -> Unit,
     onHistory: () -> Unit,
-    onPatterns: () -> Unit,
+    onConstantMinutes: (Int) -> Unit,
     onDiagnostics: () -> Unit,
     onFixBattery: () -> Unit,
     onOpenAppSettings: () -> Unit,
@@ -53,6 +56,22 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Ruido blanco", style = MaterialTheme.typography.headlineMedium)
+
+        Section("Ruido constante al empezar") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (minutes in CONSTANT_CHOICES) {
+                    Choice(
+                        constantText(minutes), settings.constantMinutes == minutes,
+                        { onConstantMinutes(minutes) }, "constant-$minutes",
+                    )
+                }
+            }
+            Hint(
+                if (settings.constantMinutes == 0) "La noche empieza escuchando: el ruido suena solo cuando hay ruido de los vecinos."
+                else "Suena sin parar ${constantText(settings.constantMinutes)} y después pasa solo a escuchar. " +
+                    "Desde la pantalla de noche podés pasar a escuchar antes.",
+            )
+        }
 
         SwipeButton("Deslizá para iniciar la noche", onStart, "start-night", enabled = !testRunning)
         Hint(
@@ -103,7 +122,6 @@ fun HomeScreen(
             OutlinedButton(onClick = onSettings, modifier = Modifier.weight(1f).testTag("open-settings")) { Text("Ajustes") }
             OutlinedButton(onClick = onHistory, modifier = Modifier.weight(1f).testTag("open-history")) { Text("Historial") }
         }
-        OutlinedButton(onClick = onPatterns, modifier = Modifier.fillMaxWidth().testTag("open-patterns")) { Text("Horarios de los vecinos") }
         TextButton(onClick = onDiagnostics, modifier = Modifier.testTag("open-diagnostics")) { Text("Diagnóstico") }
     }
 }
@@ -117,4 +135,14 @@ private fun Check(ok: Boolean, title: String, detail: String) {
             if (!ok) Hint(detail)
         }
     }
+}
+
+/** Choices for the constant noise at the start of the night, in minutes; 0 = none. */
+val CONSTANT_CHOICES = listOf(0, 30, 60, 90, 120, 180)
+
+fun constantText(minutes: Int): String = when {
+    minutes == 0 -> "No"
+    minutes < 60 -> "$minutes min"
+    minutes % 60 == 0 -> "${minutes / 60} h"
+    else -> "%d:%02d h".format(minutes / 60, minutes % 60)
 }

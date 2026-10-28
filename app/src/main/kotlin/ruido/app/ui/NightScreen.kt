@@ -43,6 +43,7 @@ fun NightScreen(
     live: LiveState,
     settings: AppSettings,
     onStop: () -> Unit,
+    onEndConstant: () -> Unit,
     onShowLevels: () -> Unit,
     onScreen: (brightness: Float, keepOn: Boolean) -> Unit,
 ) {
@@ -90,14 +91,18 @@ fun NightScreen(
             Text(clock(System.currentTimeMillis()), color = Night.Amber, fontSize = 80.sp)
             Text(phaseText(live), color = Night.Text, fontSize = 24.sp)
             live.endAtMs?.let { Text("Termina a las ${clock(it)}", color = Night.TextDim, fontSize = 18.sp) }
-            val now = System.currentTimeMillis()
-            live.windows.firstOrNull { it.last >= now }?.let {
-                Text("Prevención de ${clock(it.first)} a ${clock(it.last + 1)}", color = Night.TextDim, fontSize = 18.sp)
+            live.constantUntilMs?.let {
+                Text("Constante hasta las ${clock(it)}, después escucha", color = Night.TextDim, fontSize = 18.sp)
             }
             Text(
                 if (live.events == 1) "1 ruido detectado" else "${live.events} ruidos detectados",
                 color = Night.TextDim, fontSize = 18.sp,
             )
+            if (live.constantUntilMs != null) {
+                TextButton(onClick = { wake++; onEndConstant() }, modifier = Modifier.testTag("end-constant")) {
+                    Text("Pasar a escuchar ahora", color = Night.Amber, fontSize = 18.sp)
+                }
+            }
             Spacer(Modifier.height(32.dp))
             SwipeButton(
                 "Deslizá para terminar", onStop, "stop-night",

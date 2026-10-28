@@ -35,13 +35,10 @@ import ruido.app.ui.HistoryScreen
 import ruido.app.ui.HomeScreen
 import ruido.app.ui.NightDetailScreen
 import ruido.app.ui.NightScreen
-import ruido.app.ui.PatternsScreen
 import ruido.app.ui.Readiness
 import ruido.app.ui.RuidoTheme
 import ruido.app.ui.SettingsScreen
 import ruido.core.NoiseColor
-import ruido.core.Patterns
-import java.time.ZoneId
 
 class MainActivity : ComponentActivity() {
 
@@ -51,7 +48,6 @@ class MainActivity : ComponentActivity() {
         data object History : Route
         data class Night(val startMs: Long) : Route
         data object Diagnostics : Route
-        data object Patterns : Route
     }
 
     private lateinit var storage: NightStorage
@@ -135,6 +131,7 @@ class MainActivity : ComponentActivity() {
                     live = live,
                     settings = settings,
                     onStop = { NightService.stop(this@MainActivity) },
+                    onEndConstant = { NightService.endConstant(this@MainActivity) },
                     onShowLevels = { unlockThen { route = Route.Diagnostics } },
                     onScreen = ::setScreen,
                 )
@@ -157,7 +154,7 @@ class MainActivity : ComponentActivity() {
                     onOpenNight = { route = Route.Night(it) },
                     onSettings = { route = Route.Settings },
                     onHistory = { route = Route.History },
-                    onPatterns = { route = Route.Patterns },
+                    onConstantMinutes = { m -> SettingsRepo.update { it.copy(constantMinutes = m) } },
                     onDiagnostics = { route = Route.Diagnostics },
                     onFixBattery = ::requestBatteryExemption,
                     onOpenAppSettings = ::openAppSettings,
@@ -186,10 +183,6 @@ class MainActivity : ComponentActivity() {
                         storage.setWokeUp(r.startMs, woke)
                         nightsVersion++
                     },
-                    onDismissEvent = { eventMs, dismissed ->
-                        storage.setDismissed(r.startMs, eventMs, dismissed)
-                        nightsVersion++
-                    },
                     onShare = ::share,
                     onDelete = {
                         storage.delete(r.startMs)
@@ -199,21 +192,6 @@ class MainActivity : ComponentActivity() {
                     onBack = goBack,
                 )
                 Route.Diagnostics -> DiagnosticsScreen(live = live, onBack = goBack)
-                Route.Patterns -> {
-                    val zone = ZoneId.systemDefault()
-                    val nights = remember(nightsVersion, resumeCount, live.running) { storage.all(runningStart) }
-                    val now = remember(nightsVersion, resumeCount) { System.currentTimeMillis() }
-                    val observations = remember(nights) { storage.observations(runningStart) }
-                    PatternsScreen(
-                        patterns = remember(observations) { Patterns(observations, now, zone) },
-                        records = nights.map { it.record },
-                        preventionEnabled = settings.preventionEnabled,
-                        tonight = if (live.night) live.windows
-                        else remember(observations, settings) { Prevention.windows(observations, settings, now, settings.wakeAtMs(now), zone) },
-                        zone = zone,
-                        onBack = goBack,
-                    )
-                }
             }
         }
     }

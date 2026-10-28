@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import ruido.core.ManualSlot
 import ruido.core.NightConfig
 import ruido.core.NightConfig.Companion.MINUTE
 import ruido.core.NightConfig.Companion.SECOND
@@ -33,16 +32,8 @@ data class AppSettings(
     /** Screen brightness while the night screen is readable, 5..100 %. */
     val nightBrightnessPercent: Int = 40,
     val maxPlaybackMinutes: Int = 60,
-    /** Start softly before the times the neighbors are usually noisy. */
-    val preventionEnabled: Boolean = true,
-    /** How early prevention starts before a noisy time. */
-    val preventionLeadMinutes: Int = 10,
-    /** Prevention volume, as a share of [volumePercent]. */
-    val preventionVolumePercent: Int = 50,
-    /** Times the user knows are noisy, always prevented. */
-    val manualSlots: List<ManualSlot> = emptyList(),
-    /** Recognize snoring, coughing and crying so they don't start the masking. */
-    val classifyEnabled: Boolean = true,
+    /** Minutes of constant noise at the start of the night, before listening begins; 0 = none. */
+    val constantMinutes: Int = 0,
     /** Louder noises get louder masking, up to the volume. */
     val adaptiveVolume: Boolean = false,
     /** Name of the user's own sound file, if one was picked. */
@@ -59,7 +50,7 @@ data class AppSettings(
     }
 
     /** Engine parameters. [endAtMs] is null for the test mode, which has no end. */
-    fun toNightConfig(endAtMs: Long?, preventive: List<LongRange> = emptyList()) = NightConfig(
+    fun toNightConfig(endAtMs: Long?, constant: Boolean = false) = NightConfig(
         thresholdDb = thresholdDb.toDouble(),
         holdMs = holdMinutes * MINUTE,
         fadeInMs = fadeInSeconds * SECOND,
@@ -67,8 +58,7 @@ data class AppSettings(
         volume = volumePercent / 100.0,
         maxPlaybackMs = maxPlaybackMinutes * MINUTE,
         endAtMs = endAtMs,
-        preventive = if (preventionEnabled) preventive else emptyList(),
-        preventiveVolume = preventionVolumePercent / 100.0,
+        constantMs = if (constant) constantMinutes * MINUTE else 0,
         adaptiveVolume = adaptiveVolume,
     )
 
@@ -85,9 +75,7 @@ data class AppSettings(
         screenOnSeconds = screenOnSeconds.coerceIn(0, 300),
         nightBrightnessPercent = nightBrightnessPercent.coerceIn(5, 100),
         maxPlaybackMinutes = maxPlaybackMinutes.coerceIn(15, 240),
-        preventionLeadMinutes = preventionLeadMinutes.coerceIn(0, 30),
-        preventionVolumePercent = preventionVolumePercent.coerceIn(20, 100),
-        manualSlots = manualSlots.take(20),
+        constantMinutes = constantMinutes.coerceIn(0, 6 * 60),
     )
 }
 
@@ -113,6 +101,8 @@ object SettingsRepo {
         val next = transform(mutable.value).clamped()
         mutable.value = next
         prefs?.edit()?.apply {
+            // Settings of removed features (learned prevention, sound recognition).
+            OLD_KEYS.forEach { remove(it) }
             putInt("threshold_db", next.thresholdDb)
             putInt("hold_min", next.holdMinutes)
             putInt("fade_in_s", next.fadeInSeconds)
@@ -125,11 +115,7 @@ object SettingsRepo {
             putInt("screen_on_s", next.screenOnSeconds)
             putInt("night_brightness_pct", next.nightBrightnessPercent)
             putInt("max_playback_min", next.maxPlaybackMinutes)
-            putBoolean("prevention", next.preventionEnabled)
-            putInt("prevention_lead_min", next.preventionLeadMinutes)
-            putInt("prevention_volume_pct", next.preventionVolumePercent)
-            putString("manual_slots", next.manualSlots.joinToString(";") { it.encode() })
-            putBoolean("classify", next.classifyEnabled)
+            putInt("constant_min", next.constantMinutes)
             putBoolean("adaptive_volume", next.adaptiveVolume)
             putString("own_sound_name", next.ownSoundName)
             putBoolean("samsung_done", next.samsungDone)
@@ -152,16 +138,14 @@ object SettingsRepo {
             screenOnSeconds = p.getInt("screen_on_s", d.screenOnSeconds),
             nightBrightnessPercent = p.getInt("night_brightness_pct", d.nightBrightnessPercent),
             maxPlaybackMinutes = p.getInt("max_playback_min", d.maxPlaybackMinutes),
-            preventionEnabled = p.getBoolean("prevention", d.preventionEnabled),
-            preventionLeadMinutes = p.getInt("prevention_lead_min", d.preventionLeadMinutes),
-            preventionVolumePercent = p.getInt("prevention_volume_pct", d.preventionVolumePercent),
-            manualSlots = p.getString("manual_slots", null).orEmpty().split(';').mapNotNull { ManualSlot.decode(it) },
-            classifyEnabled = p.getBoolean("classify", d.classifyEnabled),
+            constantMinutes = p.getInt("constant_min", d.constantMinutes),
             adaptiveVolume = p.getBoolean("adaptive_volume", d.adaptiveVolume),
             ownSoundName = p.getString("own_sound_name", null),
             samsungDone = p.getBoolean("samsung_done", d.samsungDone),
         ).clamped()
     }
+
+    private val OLD_KEYS = listOf("prevention", "prevention_lead_min", "prevention_volume_pct", "manual_slots", "classify")
 
     /** For tests: forget the loaded preferences. */
     internal fun reset() {

@@ -28,11 +28,6 @@ import kotlinx.coroutines.launch
 import ruido.core.Levels
 import ruido.core.NightEngine
 import ruido.core.NightRecord
-import ruido.core.SoundKind
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
  * Listens to the microphone, asks [NightEngine] what to do every 100 ms and plays the
@@ -48,6 +43,7 @@ class NightService : Service() {
     @Volatile private var running = false
     @Volatile private var pendingSettings: AppSettings? = null
     @Volatile private var pendingRecalibrate = false
+    @Volatile private var pendingEndConstant = false
 
     private var test = false
     private var captureThread: Thread? = null
@@ -61,21 +57,12 @@ class NightService : Service() {
     private var engine: NightEngine? = null
     private var startMs = 0L
 
-    /** Sound recognition for one night: the model (null while loading or if it failed) and its thread. */
-    private class Recognition {
-        @Volatile var classifier: SoundClassifier? = null
-        val thread: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "ruido-classifier") }
-    }
-
-    @Volatile private var recognition: Recognition? = null
-    /** Classifier answers, applied by the capture thread (the engine is not thread-safe). */
-    private val kinds = ConcurrentLinkedQueue<Pair<Long, SoundKind>>()
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when {
             intent?.action == ACTION_STOP -> stopListening()
+            intent?.action == ACTION_END_CONSTANT -> if (running) pendingEndConstant = true else stopSelf()
             !running -> startListening(test = intent?.action == ACTION_TEST)
         }
         return START_NOT_STICKY
@@ -103,34 +90,16 @@ class NightService : Service() {
 
         mediaVolume = MediaVolume(this).apply { set(settings.mediaVolumePercent) }
 
-        // Tonight's prevention, from past nights and the user's fixed times.
-        val windows = if (endAt == null) emptyList() else runCatching {
-            Prevention.windows(storage.observations(startMs), settings, startMs, endAt)
-        }.onFailure { Log.e(TAG, "prevention", it) }.getOrDefault(emptyList())
-        val engine = NightEngine(settings.toNightConfig(endAt, windows), startMs).also { engine = it }
+        // The test mode always listens; a night may start with constant noise.
+        val engine = NightEngine(settings.toNightConfig(endAt, constant = !test), startMs).also { engine = it }
+        pendingEndConstant = false
         if (!test) storage.save(NightRecord(startMs, null, emptyList(), emptyList()))
         running = true
         Live.update {
             LiveState(
                 running = true, test = test, startMs = startMs, endAtMs = endAt, thresholdDb = settings.thresholdDb.toDouble(),
-                windows = windows, classifier = if (settings.classifyEnabled) "Cargando…" else "Apagado",
+                constantUntilMs = engine.constantEndMs,
             )
-        }
-
-        kinds.clear()
-        if (settings.classifyEnabled) {
-            val r = Recognition().also { recognition = it }
-            r.thread.apply {
-                execute {
-                    try {
-                        r.classifier = SoundClassifier.load(this@NightService)
-                        Live.update { it.copy(classifier = "Activo") }
-                    } catch (e: Throwable) {
-                        Log.e(TAG, "classifier", e)
-                        Live.update { it.copy(classifier = "No disponible: ${e.message ?: e.javaClass.simpleName}") }
-                    }
-                }
-            }
         }
 
         player = NoisePlayer(settings.color, OwnSound.file(this), ::fail).apply { start() }
@@ -177,11 +146,6 @@ class NightService : Service() {
         Live.update { it.copy(audioSource = if (unprocessed) "Sin procesar" else "Reconocimiento de voz") }
 
         val buffer = ShortArray(samplesPerWindow)
-        // The last two seconds of audio, kept only in memory for the classifier.
-        val recent = ShortArray(SAMPLE_RATE * 2)
-        var recentPos = 0
-        /** Noises waiting for one second of audio before being classified. */
-        val pending = ArrayDeque<Long>()
         var lastSave = System.currentTimeMillis()
         var lastSpans = 0
         try {
@@ -198,46 +162,24 @@ class NightService : Service() {
 
                 pendingSettings?.let { s ->
                     pendingSettings = null
-                    engine.updateConfig(s.toNightConfig(engine.config.endAtMs))
+                    engine.updateConfig(s.toNightConfig(engine.config.endAtMs, constant = engine.config.constantMs > 0))
                 }
                 if (pendingRecalibrate) {
                     pendingRecalibrate = false
                     engine.recalibrate(now)
                 }
-                while (true) {
-                    val (eventMs, kind) = kinds.poll() ?: break
-                    engine.classify(eventMs, kind)
-                    Live.update { it.copy(lastKind = kind) }
-                }
-
-                for (i in 0 until filled) {
-                    recent[recentPos] = buffer[i]
-                    recentPos = (recentPos + 1) % recent.size
+                if (pendingEndConstant) {
+                    pendingEndConstant = false
+                    engine.endConstant(now)
                 }
                 val tick = engine.tick(now, Levels.rmsDbfs(buffer, filled))
-                val recognizer = recognition
-                tick.startedEventMs?.let { if (recognizer?.classifier != null) pending.addLast(it) }
-                // About a second after a noise began, classify the last 0.975 s.
-                while (pending.isNotEmpty() && now - pending.first() >= CLASSIFY_AFTER_MS) {
-                    val eventMs = pending.removeFirst()
-                    val clip = ShortArray(SoundClassifier.SAMPLES) { i ->
-                        recent[(recentPos - SoundClassifier.SAMPLES + i + recent.size) % recent.size]
-                    }
-                    val r = recognizer ?: continue
-                    val c = r.classifier ?: continue
-                    runCatching {
-                        r.thread.execute {
-                            runCatching { kinds.add(eventMs to c.classify(clip)) }.onFailure { Log.e(TAG, "classify", it) }
-                        }
-                    }
-                }
                 player?.gain = tick.gain
                 val playing = tick.phase == NightEngine.Phase.PLAYING
                 Live.update {
                     it.copy(
                         phase = tick.phase, levelDb = tick.levelDb, baselineDb = tick.baselineDb,
                         expectedDb = tick.expectedDb, thresholdDb = engine.config.thresholdDb,
-                        leakDb = engine.leakDb, gain = tick.gain, noisy = tick.noisy, preventing = engine.preventing,
+                        leakDb = engine.leakDb, gain = tick.gain, noisy = tick.noisy, constantUntilMs = engine.constantEndMs,
                         events = engine.events.size,
                         playbackStarts = engine.spans.size + if (playing) 1 else 0,
                     )
@@ -292,14 +234,9 @@ class NightService : Service() {
         val start = startMs
         val volume = mediaVolume
         val lock = wakeLock
-        val classifying = recognition
-        recognition = null
         Thread({
             capture?.join(2000)
             player?.stop()
-            classifying?.thread?.shutdown()
-            runCatching { classifying?.thread?.awaitTermination(2, TimeUnit.SECONDS) }
-            classifying?.classifier?.close()
             val now = System.currentTimeMillis()
             engine?.let {
                 it.finish(now)
@@ -357,9 +294,8 @@ class NightService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "ruido.STOP"
         private const val ACTION_TEST = "ruido.TEST"
+        private const val ACTION_END_CONSTANT = "ruido.END_CONSTANT"
         private const val SAMPLE_RATE = 16_000
-        /** The classifier hears 0.975 s: wait that long after a noise starts, plus a little before it. */
-        private const val CLASSIFY_AFTER_MS = 900L
         private const val FORCE_STOP_AFTER_MS = 3_000L
         /** Saved often, so a night cut off by Android still shows when it stopped. */
         private const val SAVE_EVERY_MS = 60 * 1000L
@@ -370,6 +306,13 @@ class NightService : Service() {
 
         fun startTest(context: Context) {
             context.startForegroundService(Intent(context, NightService::class.java).setAction(ACTION_TEST))
+        }
+
+        /** Skips the rest of the constant noise and starts listening now. */
+        fun endConstant(context: Context) {
+            runCatching {
+                context.startService(Intent(context, NightService::class.java).setAction(ACTION_END_CONSTANT))
+            }.onFailure { Log.e(TAG, "endConstant", it) }
         }
 
         /**

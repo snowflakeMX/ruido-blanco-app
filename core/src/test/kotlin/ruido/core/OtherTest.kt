@@ -84,19 +84,11 @@ class NightRecordTest {
     }
 
     @Test
-    fun kindAndDismissedRoundTripAndOldFilesStillParse() {
-        val r = NightRecord(
-            1000, 9000,
-            listOf(
-                NoiseEvent(2000, 2500, 18.4, -41.2, true, false, SoundKind.MUSIC, dismissed = false),
-                NoiseEvent(3000, 3500, 14.0, -45.0, false, true, null, dismissed = true),
-            ),
-            emptyList(),
-        )
-        assertEquals(r, NightRecord.fromCsv(r.toCsv()))
-        val old = NightRecord.fromCsv("N,1000,9000,\nE,2000,2500,18.4,-41.2,true,false\n")!!
-        assertEquals(null, old.events.single().kind)
-        assertTrue(old.events.single().fromNeighbors)
+    fun filesFromOlderVersionsStillParse() {
+        // Older builds wrote the sound kind and "not a neighbor" after each noise, and preventive playbacks.
+        val old = NightRecord.fromCsv("N,1000,9000,\nE,2000,2500,18.4,-41.2,true,false,MUSIC,true\nP,2000,8000,PREVENTIVE\n")!!
+        assertEquals(2000, old.events.single().startMs)
+        assertEquals(PlaybackSpan.Reason.PREVENTIVE, old.spans.single().reason)
     }
 
     @Test
@@ -106,32 +98,28 @@ class NightRecordTest {
     }
 }
 
-class SoundKindTest {
-    private val labels = listOf("Silence", "Snoring", "Pink noise", "Music", "Knock", "Speech", "Cough")
+class TrendsTest {
+    private val zone = java.time.ZoneId.of("America/Argentina/Buenos_Aires")
 
-    private fun scores(vararg pairs: Pair<String, Float>) =
-        FloatArray(labels.size).also { a -> for ((l, v) in pairs) a[labels.indexOf(l)] = v }
+    private fun ms(y: Int, mo: Int, d: Int, h: Int) =
+        java.time.LocalDateTime.of(y, mo, d, h, 0).atZone(zone).toInstant().toEpochMilli()
 
     @Test
-    fun maskingNoiseAndSilenceAreIgnored() {
-        assertEquals(SoundKind.KNOCKS, SoundKind.classify(labels, scores("Pink noise" to 0.9f, "Knock" to 0.2f)))
+    fun saturdayOneAmIsFridayNight() {
+        assertEquals(4, Trends.nightOfWeek(ms(2026, 10, 17, 1), zone))
     }
 
     @Test
-    fun clearSnoringIsARoomSound() {
-        assertEquals(SoundKind.ROOM, SoundKind.classify(labels, scores("Snoring" to 0.6f, "Music" to 0.1f)))
-    }
-
-    @Test
-    fun weakRoomGuessStaysANeighbor() {
-        assertEquals(SoundKind.OTHER, SoundKind.classify(labels, scores("Cough" to 0.1f, "Music" to 0.05f)))
-    }
-
-    @Test
-    fun musicAndVoices() {
-        assertEquals(SoundKind.MUSIC, SoundKind.classify(labels, scores("Music" to 0.7f, "Speech" to 0.3f)))
-        assertEquals(SoundKind.VOICES, SoundKind.ofLabel("Shout"))
-        assertEquals(SoundKind.DOORS, SoundKind.ofLabel("Slam"))
-        assertEquals(SoundKind.ROOM, SoundKind.ofLabel("Baby cry, infant cry"))
+    fun weeklyAndByNight() {
+        val start = ms(2026, 10, 16, 23) // Friday night
+        val r = NightRecord(
+            start, start + 8 * 3_600_000L,
+            listOf(NoiseEvent(start + 3_600_000L, start + 3_601_000L, 15.0, -40.0, true, false)),
+            emptyList(), wokeUp = true,
+        )
+        assertEquals(1.0, Trends.byNight(listOf(r), zone)[4])
+        val week = Trends.weekly(listOf(r), zone).single()
+        assertEquals(1, week.wokeUp)
+        assertEquals(1.0, week.noisesPerNight)
     }
 }
