@@ -2,8 +2,6 @@ package ruido.app.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,7 +30,6 @@ data class Readiness(
     val batteryUnrestricted: Boolean,
 )
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeScreen(
     settings: AppSettings,
@@ -58,11 +55,11 @@ fun HomeScreen(
         Text("Ruido blanco", style = MaterialTheme.typography.headlineMedium)
 
         Section("Ruido constante al empezar") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 for (minutes in CONSTANT_CHOICES) {
                     Choice(
-                        constantText(minutes), settings.constantMinutes == minutes,
-                        { onConstantMinutes(minutes) }, "constant-$minutes",
+                        chipText(minutes), settings.constantMinutes == minutes,
+                        { onConstantMinutes(minutes) }, "constant-$minutes", Modifier.weight(1f),
                     )
                 }
             }
@@ -145,4 +142,12 @@ fun constantText(minutes: Int): String = when {
     minutes < 60 -> "$minutes min"
     minutes % 60 == 0 -> "${minutes / 60} h"
     else -> "%d:%02d h".format(minutes / 60, minutes % 60)
+}
+
+/** Short label that fits six chips in one row. */
+private fun chipText(minutes: Int): String = when (minutes) {
+    0 -> "No"
+    30 -> "½ h"
+    90 -> "1½ h"
+    else -> "${minutes / 60} h"
 }

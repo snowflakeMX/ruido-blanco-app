@@ -247,7 +247,7 @@ fun Timeline(night: StoredNight, legend: Boolean = false) {
 
 /** Filter chip that is clearly marked when selected. */
 @Composable
-fun Choice(label: String, selected: Boolean, onClick: () -> Unit, tag: String) {
+fun Choice(label: String, selected: Boolean, onClick: () -> Unit, tag: String, modifier: Modifier = Modifier) {
     FilterChip(
         selected = selected,
         onClick = onClick,
@@ -257,7 +257,7 @@ fun Choice(label: String, selected: Boolean, onClick: () -> Unit, tag: String) {
             selectedLabelColor = Night.Black,
             labelColor = Night.Text,
         ),
-        modifier = Modifier.testTag(tag),
+        modifier = modifier.testTag(tag),
     )
 }
 

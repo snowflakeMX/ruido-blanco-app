@@ -126,7 +126,7 @@ class AppTest {
     @Test
     fun settingsSlidersChangeAndPersist() {
         SettingsRepo.update { AppSettings() }
-        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("open-settings").performScrollTo().performClick()
         shot("02-ajustes")
 
         compose.onNodeWithTag("threshold").performScrollTo()
@@ -147,7 +147,7 @@ class AppTest {
 
         // Leave and come back: values are kept, also in the saved preferences.
         compose.onNodeWithTag("back").performClick()
-        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("open-settings").performScrollTo().performClick()
         compose.onNodeWithTag("threshold").performScrollTo()
         compose.onNodeWithTag("threshold-value").assertTextEquals("8 dB")
         val prefs = compose.activity.getSharedPreferences("settings", 0)
@@ -157,7 +157,7 @@ class AppTest {
 
     @Test
     fun settingsTestModeShowsLiveLevel() {
-        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("open-settings").performScrollTo().performClick()
         Live.update {
             LiveState(
                 running = true, test = true, phase = NightEngine.Phase.LISTENING,
@@ -278,7 +278,7 @@ class AppTest {
     @Test
     fun adaptiveVolumeAndOwnSound() {
         SettingsRepo.update { AppSettings() }
-        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("open-settings").performScrollTo().performClick()
         compose.onNodeWithTag("adaptive").performScrollTo().performClick()
         assertEquals(true, SettingsRepo.current.adaptiveVolume)
         shot("10-ajustes-volumen")
